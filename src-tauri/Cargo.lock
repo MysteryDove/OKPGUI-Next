@@ -2448,6 +2448,7 @@ name = "okpgui-next"
 version = "0.1.0"
 dependencies = [
  "chromiumoxide",
+ "encoding_rs",
  "futures",
  "lava_torrent",
  "regex",
@@ -2458,6 +2459,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "time",
  "tokio",
  "toml 0.8.2",
  "tungstenite",

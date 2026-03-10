@@ -1,10 +1,12 @@
 ﻿import { Disclosure } from '@headlessui/react';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     CalendarClock,
     ChevronDown,
     Cookie,
+    Upload,
     Loader2,
     LogIn,
     Trash2,
@@ -15,17 +17,17 @@ import CookieCaptureDialog, {
     CookieCaptureDialogMode,
     getCapturedCookieKey,
 } from '../components/CookieCaptureDialog';
-
-interface SiteCookieStore {
-    raw_text: string;
-}
-
-interface SiteCookies {
-    dmhy: SiteCookieStore;
-    nyaa: SiteCookieStore;
-    acgrip: SiteCookieStore;
-    bangumi: SiteCookieStore;
-}
+import {
+    buildCookieTextFromCapturedCookies,
+    buildMergedCookieText,
+    buildSiteCookiesFromMergedCookieText,
+    emptySiteCookies,
+    getCookiePanelSummary,
+    getRemainingTextClass,
+    getSiteCookieText,
+    SiteCookies,
+    updateSiteCookies,
+} from '../utils/cookieUtils';
 
 interface Profile {
     cookies: string;
@@ -44,11 +46,22 @@ interface Profile {
 interface CookieDialogState {
     siteCode: string;
     siteLabel: string;
+    userAgent: string;
     mode: CookieCaptureDialogMode;
     cookies: CapturedCookie[];
     selectedCookieKeys: string[];
     isCaptureReady: boolean;
     errorMessage?: string;
+}
+
+interface CookieCaptureResult {
+    cookies: CapturedCookie[];
+    user_agent: string;
+}
+
+interface CookieImportResult {
+    site_cookies: SiteCookies;
+    user_agent: string;
 }
 
 interface SiteConfig {
@@ -57,23 +70,6 @@ interface SiteConfig {
     nameField: keyof Profile;
     tokenField?: keyof Profile;
     loginEnabled: boolean;
-}
-
-interface NetscapeCookieLine {
-    domain: string;
-    includeSubdomains: string;
-    path: string;
-    secure: string;
-    expires: string;
-    name: string;
-    value: string;
-}
-
-interface CookiePanelSummary {
-    cookieCount: number;
-    earliestExpiry: number | null;
-    earliestExpiryText: string;
-    remainingText: string;
 }
 
 interface SiteLoginTestResult {
@@ -85,13 +81,6 @@ interface SiteLoginTestState {
     status: 'testing' | 'success' | 'error';
     message: string;
 }
-
-const emptySiteCookies = (): SiteCookies => ({
-    dmhy: { raw_text: '' },
-    nyaa: { raw_text: '' },
-    acgrip: { raw_text: '' },
-    bangumi: { raw_text: '' },
-});
 
 const defaultProfile: Profile = {
     cookies: '',
@@ -132,13 +121,6 @@ const sites: SiteConfig[] = [
     },
 ];
 
-const siteCookieDomains: Record<string, string[]> = {
-    dmhy: ['share.dmhy.org', '.dmhy.org'],
-    nyaa: ['nyaa.si', '.nyaa.si'],
-    acgrip: ['acg.rip', '.acg.rip'],
-    bangumi: ['bangumi.moe', '.bangumi.moe'],
-};
-
 function getErrorMessage(error: unknown): string {
     if (typeof error === 'string') {
         return error;
@@ -151,274 +133,12 @@ function getErrorMessage(error: unknown): string {
     return '获取 Cookie 失败，请重试。';
 }
 
-function normalizeDomain(domain: string): string {
-    return domain.trim().replace(/^\./, '');
-}
-
-function getNetscapeCookieKey(cookie: NetscapeCookieLine): string {
-    return [normalizeDomain(cookie.domain), cookie.path, cookie.name].join('\u0000');
-}
-
-function matchesSiteDomain(domain: string, candidates: string[]): boolean {
-    const normalizedDomain = normalizeDomain(domain);
-
-    return candidates.some((candidate) => {
-        const normalizedCandidate = normalizeDomain(candidate);
-        return (
-            normalizedDomain === normalizedCandidate ||
-            normalizedDomain.endsWith(`.${normalizedCandidate}`)
-        );
-    });
-}
-
-function parseCookieText(cookieText: string): {
-    otherLines: string[];
-    netscapeCookies: NetscapeCookieLine[];
-} {
-    const otherLines: string[] = [];
-    const netscapeCookies: NetscapeCookieLine[] = [];
-
-    for (const rawLine of cookieText.split(/\r?\n/)) {
-        const trimmedLine = rawLine.trim();
-        if (!trimmedLine) {
-            continue;
-        }
-
-        if (trimmedLine === '# Netscape HTTP Cookie File') {
-            continue;
-        }
-
-        if (trimmedLine.startsWith('#')) {
-            otherLines.push(rawLine);
-            continue;
-        }
-
-        const parts = rawLine.split('\t');
-        if (parts.length >= 7) {
-            const [domain, includeSubdomains, path, secure, expires, name, ...valueParts] = parts;
-            netscapeCookies.push({
-                domain,
-                includeSubdomains,
-                path,
-                secure,
-                expires,
-                name,
-                value: valueParts.join('\t'),
-            });
-            continue;
-        }
-
-        otherLines.push(rawLine);
-    }
-
-    return { otherLines, netscapeCookies };
-}
-
-function toNetscapeCookieLine(cookie: CapturedCookie): NetscapeCookieLine {
-    return {
-        domain: cookie.domain,
-        includeSubdomains: cookie.domain.startsWith('.') ? 'TRUE' : 'FALSE',
-        path: cookie.path || '/',
-        secure: cookie.secure ? 'TRUE' : 'FALSE',
-        expires: `${cookie.expires > 0 ? Math.floor(cookie.expires) : 0}`,
-        name: cookie.name,
-        value: cookie.value,
-    };
-}
-function deduplicateNetscapeCookies(cookies: NetscapeCookieLine[]): NetscapeCookieLine[] {
-    const seen = new Set<string>();
-    const deduplicated: NetscapeCookieLine[] = [];
-
-    for (let index = cookies.length - 1; index >= 0; index -= 1) {
-        const cookie = cookies[index];
-        const cookieKey = getNetscapeCookieKey(cookie);
-
-        if (seen.has(cookieKey)) {
-            continue;
-        }
-
-        seen.add(cookieKey);
-        deduplicated.unshift(cookie);
-    }
-
-    return deduplicated;
-}
-
-function formatCookieText(otherLines: string[], netscapeCookies: NetscapeCookieLine[]): string {
-    const lines: string[] = [];
-    const normalizedOtherLines = otherLines
-        .map((line) => line.trimEnd())
-        .filter((line) => line.trim() !== '');
-
-    if (normalizedOtherLines.length > 0) {
-        lines.push(...normalizedOtherLines);
-    }
-
-    const normalizedCookies = deduplicateNetscapeCookies(netscapeCookies);
-    if (normalizedCookies.length > 0) {
-        if (lines.length > 0) {
-            lines.push('');
-        }
-
-        lines.push('# Netscape HTTP Cookie File');
-        lines.push(
-            ...normalizedCookies.map((cookie) =>
-                [
-                    cookie.domain,
-                    cookie.includeSubdomains,
-                    cookie.path,
-                    cookie.secure,
-                    cookie.expires,
-                    cookie.name,
-                    cookie.value,
-                ].join('\t'),
-            ),
-        );
-    }
-
-    return lines.join('\n');
-}
-
-function extractSiteCookieText(cookieText: string, siteCode: string): string {
-    const { netscapeCookies } = parseCookieText(cookieText);
-    const domains = siteCookieDomains[siteCode] ?? [];
-    const siteCookies = netscapeCookies.filter((cookie) =>
-        matchesSiteDomain(cookie.domain, domains),
-    );
-
-    return formatCookieText([], siteCookies);
-}
-
-function buildSiteCookiesFromMergedCookieText(cookieText: string): SiteCookies {
-    return {
-        dmhy: { raw_text: extractSiteCookieText(cookieText, 'dmhy') },
-        nyaa: { raw_text: extractSiteCookieText(cookieText, 'nyaa') },
-        acgrip: { raw_text: extractSiteCookieText(cookieText, 'acgrip') },
-        bangumi: { raw_text: extractSiteCookieText(cookieText, 'bangumi') },
-    };
-}
-
-function buildMergedCookieText(siteCookies: SiteCookies): string {
-    const netscapeCookies = [
-        ...parseCookieText(siteCookies.dmhy.raw_text).netscapeCookies,
-        ...parseCookieText(siteCookies.nyaa.raw_text).netscapeCookies,
-        ...parseCookieText(siteCookies.acgrip.raw_text).netscapeCookies,
-        ...parseCookieText(siteCookies.bangumi.raw_text).netscapeCookies,
-    ];
-
-    return formatCookieText([], netscapeCookies);
-}
-
-function getSiteCookieText(siteCookies: SiteCookies, siteCode: string): string {
-    switch (siteCode) {
-        case 'dmhy':
-            return siteCookies.dmhy.raw_text;
-        case 'nyaa':
-            return siteCookies.nyaa.raw_text;
-        case 'acgrip':
-            return siteCookies.acgrip.raw_text;
-        case 'bangumi':
-            return siteCookies.bangumi.raw_text;
-        default:
-            return '';
-    }
-}
-
-function updateSiteCookies(siteCookies: SiteCookies, siteCode: string, rawText: string): SiteCookies {
-    switch (siteCode) {
-        case 'dmhy':
-            return { ...siteCookies, dmhy: { raw_text: rawText } };
-        case 'nyaa':
-            return { ...siteCookies, nyaa: { raw_text: rawText } };
-        case 'acgrip':
-            return { ...siteCookies, acgrip: { raw_text: rawText } };
-        case 'bangumi':
-            return { ...siteCookies, bangumi: { raw_text: rawText } };
-        default:
-            return siteCookies;
-    }
-}
-
 function updateProfileSiteCookies(profile: Profile, siteCode: string, rawText: string): Profile {
     const siteCookies = updateSiteCookies(profile.site_cookies, siteCode, rawText);
     return {
         ...profile,
         site_cookies: siteCookies,
-        cookies: buildMergedCookieText(siteCookies),
-    };
-}
-
-function mergeCookiesForSite(
-    existingCookieText: string,
-    siteCode: string,
-    selectedCookies: CapturedCookie[],
-): string {
-    const { otherLines, netscapeCookies } = parseCookieText(existingCookieText);
-    const domains = siteCookieDomains[siteCode] ?? [];
-    const keptCookies = netscapeCookies.filter(
-        (cookie) => !matchesSiteDomain(cookie.domain, domains),
-    );
-    const mergedCookies = deduplicateNetscapeCookies([
-        ...keptCookies,
-        ...selectedCookies.map(toNetscapeCookieLine),
-    ]);
-
-    return formatCookieText(otherLines, mergedCookies);
-}
-
-function formatExpiryDate(epochSeconds: number | null): string {
-    if (!epochSeconds || !Number.isFinite(epochSeconds) || epochSeconds <= 0) {
-        return '无有效过期时间';
-    }
-
-    const date = new Date(epochSeconds * 1000);
-    if (Number.isNaN(date.getTime())) {
-        return '无有效过期时间';
-    }
-
-    return date.toLocaleString('zh-CN', { hour12: false });
-}
-
-function formatDaysRemaining(epochSeconds: number | null): string {
-    if (!epochSeconds || !Number.isFinite(epochSeconds) || epochSeconds <= 0) {
-        return '--';
-    }
-
-    const millisecondsRemaining = epochSeconds * 1000 - Date.now();
-    const days = Math.max(1, Math.ceil(Math.abs(millisecondsRemaining) / 86400000));
-
-    return millisecondsRemaining >= 0 ? `剩余 ${days} 天` : `已过期 ${days} 天`;
-}
-
-function getRemainingTextClass(earliestExpiry: number | null): string {
-    if (!earliestExpiry || !Number.isFinite(earliestExpiry) || earliestExpiry <= 0) {
-        return 'text-slate-500';
-    }
-
-    const millisecondsRemaining = earliestExpiry * 1000 - Date.now();
-    if (millisecondsRemaining < 0) {
-        return 'text-red-300';
-    }
-
-    if (millisecondsRemaining <= 7 * 86400000) {
-        return 'text-yellow-300';
-    }
-
-    return 'text-emerald-300';
-}
-
-function getCookiePanelSummary(rawText: string): CookiePanelSummary {
-    const { netscapeCookies } = parseCookieText(rawText);
-    const expiryValues = netscapeCookies
-        .map((cookie) => Number.parseInt(cookie.expires, 10))
-        .filter((value) => Number.isFinite(value) && value > 0);
-    const earliestExpiry = expiryValues.length > 0 ? Math.min(...expiryValues) : null;
-
-    return {
-        cookieCount: netscapeCookies.length,
-        earliestExpiry,
-        earliestExpiryText: formatExpiryDate(earliestExpiry),
-        remainingText: formatDaysRemaining(earliestExpiry),
+        cookies: buildMergedCookieText(siteCookies, profile.user_agent),
     };
 }
 
@@ -488,7 +208,7 @@ function normalizeProfile(profile?: Partial<Profile>): Profile {
         ...defaultProfile,
         ...profile,
         site_cookies: siteCookies,
-        cookies: buildMergedCookieText(siteCookies) || mergedFallbackCookies,
+        cookies: buildMergedCookieText(siteCookies, profile?.user_agent ?? '') || mergedFallbackCookies,
     };
 }
 
@@ -603,7 +323,10 @@ export default function IdentityPage() {
         void persistProfileToDisk(
             {
                 ...profileToSave,
-                cookies: buildMergedCookieText(profileToSave.site_cookies),
+                cookies: buildMergedCookieText(
+                    profileToSave.site_cookies,
+                    profileToSave.user_agent,
+                ),
             },
             explicitName,
         );
@@ -667,6 +390,7 @@ export default function IdentityPage() {
         setCookieDialog({
             siteCode,
             siteLabel: site.label,
+            userAgent: profile.user_agent,
             mode: 'confirm',
             cookies: [],
             selectedCookieKeys: [],
@@ -740,7 +464,10 @@ export default function IdentityPage() {
         );
 
         try {
-            const cookies = await invoke<CapturedCookie[]>('finish_cookie_capture', { sessionId });
+            const captureResult = await invoke<CookieCaptureResult>('finish_cookie_capture', {
+                sessionId,
+            });
+            const cookies = captureResult.cookies;
 
             if (cookies.length === 0) {
                 setCookieDialog((current) =>
@@ -762,6 +489,7 @@ export default function IdentityPage() {
                 current
                     ? {
                           ...current,
+                          userAgent: captureResult.user_agent,
                           mode: 'select',
                           cookies,
                           selectedCookieKeys: cookies.map(getCapturedCookieKey),
@@ -831,14 +559,15 @@ export default function IdentityPage() {
             return;
         }
 
-        const mergedCookieText = mergeCookiesForSite(
-            profile.cookies,
-            cookieDialog.siteCode,
+        const nextSiteRawText = buildCookieTextFromCapturedCookies(
+            cookieDialog.userAgent,
             selectedCookies,
         );
-        const nextSiteRawText = extractSiteCookieText(mergedCookieText, cookieDialog.siteCode);
-
-        const nextProfile = updateProfileSiteCookies(profile, cookieDialog.siteCode, nextSiteRawText);
+        const nextProfile = {
+            ...updateProfileSiteCookies(profile, cookieDialog.siteCode, nextSiteRawText),
+            user_agent: cookieDialog.userAgent,
+        };
+        nextProfile.cookies = buildMergedCookieText(nextProfile.site_cookies, nextProfile.user_agent);
         setProfile(nextProfile);
         clearSiteLoginTest(cookieDialog.siteCode);
         void persistProfileToDisk(nextProfile);
@@ -853,6 +582,40 @@ export default function IdentityPage() {
     const updateSiteCookieText = (siteCode: string, rawText: string) => {
         clearSiteLoginTest(siteCode);
         setProfile((current) => updateProfileSiteCookies(current, siteCode, rawText));
+    };
+
+    const handleImportCookies = async () => {
+        try {
+            const selectedPath = await open({
+                multiple: false,
+                filters: [
+                    { name: 'Cookie Files', extensions: ['txt', 'cookie', 'cookies'] },
+                    { name: 'All Files', extensions: ['*'] },
+                ],
+            });
+
+            if (!selectedPath || Array.isArray(selectedPath)) {
+                return;
+            }
+
+            const result = await invoke<CookieImportResult>('import_cookie_file', {
+                cookiePath: selectedPath,
+                fallbackUserAgent: profile.user_agent.trim() || null,
+            });
+
+            const nextProfile: Profile = {
+                ...profile,
+                site_cookies: result.site_cookies,
+                user_agent: result.user_agent,
+                cookies: buildMergedCookieText(result.site_cookies, result.user_agent),
+            };
+
+            setProfile(nextProfile);
+            setSiteLoginTests({});
+            await persistProfileToDisk(nextProfile);
+        } catch (error) {
+            console.error('导入 Cookie 文件失败:', error);
+        }
     };
 
     const handleSiteLoginTest = async (siteCode: string) => {
@@ -1057,6 +820,18 @@ export default function IdentityPage() {
                             <Cookie size={16} />
                             站点 Cookie
                         </h2>
+                        <div className="mb-3 flex justify-end">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    void handleImportCookies();
+                                }}
+                                className="flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-100 transition-colors hover:bg-emerald-500/20"
+                            >
+                                <Upload size={14} />
+                                导入自定义 Cookie 文件
+                            </button>
+                        </div>
                         <div className="space-y-3">
                             {cookiePanels.map(({ site, rawText, summary }, index) => (
                                 <Disclosure key={site.code} defaultOpen={index === 0}>

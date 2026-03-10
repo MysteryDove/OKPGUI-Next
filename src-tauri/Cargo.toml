@@ -31,6 +31,8 @@ chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-
 futures = "0.3"
 tungstenite = "0.23"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip", "brotli", "deflate", "charset"] }
+encoding_rs = "0.8"
+time = { version = "0.3", features = ["formatting", "macros"] }
 
 
 

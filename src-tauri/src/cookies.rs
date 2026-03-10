@@ -1,4 +1,5 @@
 ﻿use crate::config::load_config;
+use crate::profile::build_site_cookie_header;
 
 use std::collections::{HashMap, HashSet};
 use std::net::TcpStream;
@@ -12,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use chromiumoxide::cdp::browser_protocol::network::Cookie;
 use regex::Regex;
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, USER_AGENT};
-use reqwest::{Client, Proxy, StatusCode, Url};
+use reqwest::{Client, Proxy, StatusCode};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::AppHandle;
@@ -78,19 +79,16 @@ const SITE_CONFIGS: &[SiteConfig] = &[
     },
 ];
 
-#[derive(Debug, Clone)]
-struct NetscapeCookieLine {
-    domain: String,
-    path: String,
-    secure: bool,
-    name: String,
-    value: String,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct LoginTestResult {
     pub success: bool,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CookieCaptureResult {
+    pub cookies: Vec<CapturedCookie>,
+    pub user_agent: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,6 +117,7 @@ impl From<&Cookie> for CapturedCookie {
 #[derive(Debug, Clone, Serialize)]
 struct CookieCaptureStatus {
     cookies: Vec<CapturedCookie>,
+    user_agent: String,
     browser_closed: bool,
     completed: bool,
     error: Option<String>,
@@ -127,6 +126,7 @@ struct CookieCaptureStatus {
 #[derive(Debug, Default)]
 struct CookieCaptureRuntimeState {
     cookies: Vec<CapturedCookie>,
+    user_agent: String,
     browser_closed: bool,
     completed: bool,
     error: Option<String>,
@@ -143,6 +143,7 @@ impl CookieCaptureHandle {
         let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         CookieCaptureStatus {
             cookies: state.cookies.clone(),
+            user_agent: state.user_agent.clone(),
             browser_closed: state.browser_closed,
             completed: state.completed,
             error: state.error.clone(),
@@ -188,90 +189,6 @@ fn cookie_expiration(cookie: &Cookie) -> i64 {
 
 fn normalize_cookie_domain(domain: &str) -> &str {
     domain.trim().trim_start_matches('.')
-}
-
-fn parse_netscape_cookie_text(cookie_text: &str) -> Vec<NetscapeCookieLine> {
-    let mut cookies = Vec::new();
-
-    for raw_line in cookie_text.lines() {
-        let trimmed_line = raw_line.trim();
-        if trimmed_line.is_empty() || trimmed_line == "# Netscape HTTP Cookie File" {
-            continue;
-        }
-
-        let normalized_line = if let Some(http_only_line) = raw_line.strip_prefix("#HttpOnly_") {
-            http_only_line
-        } else {
-            if trimmed_line.starts_with('#') {
-                continue;
-            }
-            raw_line
-        };
-
-        let parts: Vec<&str> = normalized_line.split('\t').collect();
-        if parts.len() < 7 {
-            continue;
-        }
-
-        cookies.push(NetscapeCookieLine {
-            domain: parts[0].trim().to_string(),
-            path: parts[2].trim().to_string(),
-            secure: parts[3].trim().eq_ignore_ascii_case("TRUE"),
-            name: parts[5].trim().to_string(),
-            value: parts[6..].join("\t"),
-        });
-    }
-
-    cookies
-}
-
-fn cookie_matches_request(cookie: &NetscapeCookieLine, request_url: &Url) -> bool {
-    let Some(host) = request_url.host_str() else {
-        return false;
-    };
-
-    if !matches_site_domain(host, &[cookie.domain.as_str()]) {
-        return false;
-    }
-
-    if cookie.secure && request_url.scheme() != "https" {
-        return false;
-    }
-
-    let cookie_path = if cookie.path.is_empty() { "/" } else { cookie.path.as_str() };
-    request_url.path().starts_with(cookie_path)
-}
-
-fn build_cookie_header(site: &SiteConfig, cookie_text: &str) -> Result<String, String> {
-    let request_url = Url::parse(site.test_url)
-        .map_err(|e| format!("无效的站点测试地址 {}: {}", site.test_url, e))?;
-    let mut seen = HashSet::new();
-    let mut pairs = Vec::new();
-
-    for cookie in parse_netscape_cookie_text(cookie_text).into_iter().rev() {
-        let key = format!(
-            "{}\0{}\0{}",
-            normalize_cookie_domain(&cookie.domain),
-            cookie.path,
-            cookie.name
-        );
-
-        if seen.contains(&key) {
-            continue;
-        }
-
-        if !matches_site_domain(&cookie.domain, site.cookie_domains)
-            || !cookie_matches_request(&cookie, &request_url)
-        {
-            continue;
-        }
-
-        seen.insert(key);
-        pairs.push(format!("{}={}", cookie.name, cookie.value));
-    }
-
-    pairs.reverse();
-    Ok(pairs.join("; "))
 }
 
 fn resolve_test_proxy(app: &AppHandle) -> Option<String> {
@@ -390,15 +307,24 @@ async fn perform_site_login_test(
     expected_name: Option<&str>,
     proxy_url: Option<&str>,
 ) -> Result<LoginTestResult, String> {
-    let cookie_header = build_cookie_header(site, cookie_text)?;
-    if cookie_header.trim().is_empty() {
+    let cookie_context = build_site_cookie_header(
+        cookie_text,
+        site.test_url,
+        site.cookie_domains,
+        user_agent,
+    )?;
+    if cookie_context.cookie_header.trim().is_empty() {
         return Ok(LoginTestResult {
             success: false,
             message: "没有可用于该站点测试的 Cookie。".to_string(),
         });
     }
 
-    let client = build_test_client(user_agent, &cookie_header, proxy_url)?;
+    let client = build_test_client(
+        &cookie_context.user_agent,
+        &cookie_context.cookie_header,
+        proxy_url,
+    )?;
     let response = client
         .get(site.test_url)
         .send()
@@ -906,12 +832,23 @@ impl CdpClient {
 
         serde_json::from_value(cookies_value).map_err(|e| format!("解析浏览器 Cookie 失败: {}", e))
     }
+
+    fn get_user_agent(&mut self) -> Result<String, String> {
+        let result = self.send_command("Browser.getVersion", json!({}))?;
+        result
+            .get("userAgent")
+            .and_then(Value::as_str)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "无法从浏览器调试接口获取 User-Agent。".to_string())
+    }
 }
 
 struct CookieCaptureSession {
     site: &'static SiteConfig,
     browser: BrowserProcess,
     client: CdpClient,
+    user_agent: String,
 }
 
 impl CookieCaptureSession {
@@ -929,7 +866,8 @@ impl CookieCaptureSession {
         let ws_url = browser.wait_for_debug_ws_url(DEBUG_ENDPOINT_TIMEOUT)?;
         println!("[cookies] Browser launched successfully, CDP URL: {}", ws_url);
 
-        let client = CdpClient::connect(&ws_url)?;
+        let mut client = CdpClient::connect(&ws_url)?;
+        let user_agent = client.get_user_agent()?;
         println!(
             "[cookies] CDP websocket connected. User should now log in and come back to the app when done."
         );
@@ -938,6 +876,7 @@ impl CookieCaptureSession {
             site,
             browser,
             client,
+            user_agent,
         })
     }
 
@@ -951,6 +890,8 @@ impl CookieCaptureSession {
         stop_flag: &AtomicBool,
         state: &Arc<Mutex<CookieCaptureRuntimeState>>,
     ) -> Result<(), String> {
+        update_runtime_state(state, |current| current.user_agent = self.user_agent.clone());
+
         match self.snapshot_cookies() {
             Ok(cookies) => update_runtime_state(state, |current| current.cookies = cookies),
             Err(err) => println!("[cookies] Initial cookie snapshot failed: {}", err),
@@ -1123,20 +1064,26 @@ pub async fn start_cookie_capture(site: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn finish_cookie_capture(session_id: String) -> Result<Vec<CapturedCookie>, String> {
+pub async fn finish_cookie_capture(session_id: String) -> Result<CookieCaptureResult, String> {
     let status = tokio::task::spawn_blocking(move || finish_cookie_capture_sync(session_id))
         .await
         .map_err(|e| format!("Cookie capture task failed: {}", e))??;
 
     if !status.cookies.is_empty() {
-        return Ok(status.cookies);
+        return Ok(CookieCaptureResult {
+            cookies: status.cookies,
+            user_agent: status.user_agent,
+        });
     }
 
     if let Some(error) = status.error {
         return Err(error);
     }
 
-    Ok(status.cookies)
+    Ok(CookieCaptureResult {
+        cookies: status.cookies,
+        user_agent: status.user_agent,
+    })
 }
 
 #[tauri::command]

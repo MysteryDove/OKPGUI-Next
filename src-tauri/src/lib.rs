@@ -23,6 +23,7 @@ pub fn run() {
             profile::save_profile,
             profile::delete_profile,
             profile::update_profile_cookies,
+            profile::import_cookie_file,
             torrent::parse_torrent,
             title_pattern::match_title,
             cookies::start_cookie_capture,

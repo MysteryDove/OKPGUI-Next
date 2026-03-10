@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
     FolderOpen,
@@ -7,10 +9,17 @@ import {
     Trash2,
     Eye,
     Send,
+    Loader2,
 } from 'lucide-react';
 import FileTree, { FileTreeNodeData } from '../components/FileTree';
-import ConsoleModal from '../components/ConsoleModal';
+import ConsoleModal, {
+    PublishComplete,
+    PublishConsoleSite,
+    PublishOutput,
+    PublishSiteComplete,
+} from '../components/ConsoleModal';
 import MarkdownPreview from '../components/MarkdownPreview';
+import { getCookiePanelSummary, getRemainingTextClass, getSiteCookieText, SiteCookies } from '../utils/cookieUtils';
 
 interface SiteSelection {
     dmhy: boolean;
@@ -31,6 +40,37 @@ interface Template {
     profile: string;
     title: string;
     sites: SiteSelection;
+}
+
+interface Profile {
+    user_agent: string;
+    site_cookies: SiteCookies;
+    dmhy_name: string;
+    nyaa_name: string;
+    acgrip_name: string;
+    bangumi_name: string;
+    acgnx_asia_name: string;
+    acgnx_asia_token: string;
+    acgnx_global_name: string;
+    acgnx_global_token: string;
+}
+
+interface SiteLoginTestResult {
+    success: boolean;
+    message: string;
+}
+
+interface SiteLoginTestState {
+    status: 'testing' | 'success' | 'error';
+    message: string;
+}
+
+interface SiteDefinition {
+    key: keyof SiteSelection;
+    label: string;
+    loginEnabled: boolean;
+    nameField: keyof Profile;
+    tokenField?: keyof Profile;
 }
 
 interface TorrentInfo {
@@ -58,14 +98,43 @@ const defaultTemplate: Template = {
     },
 };
 
-const siteLabels: { key: keyof SiteSelection; label: string }[] = [
-    { key: 'dmhy', label: '動漫花園' },
-    { key: 'nyaa', label: 'Nyaa' },
-    { key: 'acgrip', label: 'ACG.RIP' },
-    { key: 'bangumi', label: '萌番組' },
-    { key: 'acgnx_asia', label: 'ACGNx Asia' },
-    { key: 'acgnx_global', label: 'ACGNx Global' },
+const siteDefinitions: SiteDefinition[] = [
+    { key: 'dmhy', label: '動漫花園', loginEnabled: true, nameField: 'dmhy_name' },
+    { key: 'nyaa', label: 'Nyaa', loginEnabled: true, nameField: 'nyaa_name' },
+    { key: 'acgrip', label: 'ACG.RIP', loginEnabled: true, nameField: 'acgrip_name' },
+    { key: 'bangumi', label: '萌番组', loginEnabled: true, nameField: 'bangumi_name' },
+    {
+        key: 'acgnx_asia',
+        label: 'ACGNx Asia',
+        loginEnabled: false,
+        nameField: 'acgnx_asia_name',
+        tokenField: 'acgnx_asia_token',
+    },
+    {
+        key: 'acgnx_global',
+        label: 'ACGNx Global',
+        loginEnabled: false,
+        nameField: 'acgnx_global_name',
+        tokenField: 'acgnx_global_token',
+    },
 ];
+
+const getTorrentPathFromUriList = (uriList: string): string | null => {
+    const candidate = uriList
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .find((entry) => entry && !entry.startsWith('#') && entry.toLowerCase().startsWith('file://'));
+
+    if (!candidate) {
+        return null;
+    }
+
+    try {
+        return decodeURIComponent(candidate.replace(/^file:\/\//i, ''));
+    } catch {
+        return candidate.replace(/^file:\/\//i, '');
+    }
+};
 
 export default function HomePage() {
     // Template state
@@ -77,6 +146,7 @@ export default function HomePage() {
     // Profile state
     const [profileList, setProfileList] = useState<string[]>([]);
     const [selectedProfile, setSelectedProfile] = useState('');
+    const [selectedProfileData, setSelectedProfileData] = useState<Profile | null>(null);
     const [okpExecutablePath, setOkpExecutablePath] = useState('');
 
     // Torrent state
@@ -88,12 +158,101 @@ export default function HomePage() {
     const [showPreview, setShowPreview] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [isPublishing, setIsPublishing] = useState(false);
+    const [publishSites, setPublishSites] = useState<Record<string, PublishConsoleSite>>({});
+    const [isPublishComplete, setIsPublishComplete] = useState(false);
+    const [publishResult, setPublishResult] = useState<PublishComplete | null>(null);
+    const [siteLoginTests, setSiteLoginTests] = useState<Record<string, SiteLoginTestState>>({});
+    const templateRef = useRef(template);
 
     // Load templates and profiles on mount
     useEffect(() => {
         loadTemplateList();
         loadProfileList();
         loadLastConfig();
+    }, []);
+
+    useEffect(() => {
+        templateRef.current = template;
+    }, [template]);
+
+    useEffect(() => {
+        if (!selectedProfile) {
+            setSelectedProfileData(null);
+            setSiteLoginTests({});
+            return;
+        }
+
+        void loadSelectedProfileData(selectedProfile);
+    }, [selectedProfile]);
+
+    useEffect(() => {
+        let outputUnlisten: UnlistenFn | null = null;
+        let siteCompleteUnlisten: UnlistenFn | null = null;
+        let completeUnlisten: UnlistenFn | null = null;
+
+        const setupListeners = async () => {
+            outputUnlisten = await listen<PublishOutput>('publish-output', (event) => {
+                setPublishSites((current) => {
+                    const existing = current[event.payload.site_code] ?? {
+                        siteCode: event.payload.site_code,
+                        siteLabel: event.payload.site_label,
+                        lines: [],
+                        status: 'running' as const,
+                        message: '发布中...',
+                    };
+
+                    return {
+                        ...current,
+                        [event.payload.site_code]: {
+                            ...existing,
+                            status: 'running',
+                            message: '发布中...',
+                            lines: [
+                                ...existing.lines,
+                                {
+                                    text: event.payload.line,
+                                    isError: event.payload.is_stderr,
+                                },
+                            ],
+                        },
+                    };
+                });
+            });
+
+            siteCompleteUnlisten = await listen<PublishSiteComplete>('publish-site-complete', (event) => {
+                setPublishSites((current) => {
+                    const existing = current[event.payload.site_code] ?? {
+                        siteCode: event.payload.site_code,
+                        siteLabel: event.payload.site_label,
+                        lines: [],
+                        status: 'idle' as const,
+                        message: '',
+                    };
+
+                    return {
+                        ...current,
+                        [event.payload.site_code]: {
+                            ...existing,
+                            status: event.payload.success ? 'success' : 'error',
+                            message: event.payload.message,
+                        },
+                    };
+                });
+            });
+
+            completeUnlisten = await listen<PublishComplete>('publish-complete', (event) => {
+                setIsPublishComplete(true);
+                setPublishResult(event.payload);
+            });
+        };
+
+        void setupListeners();
+
+        return () => {
+            outputUnlisten?.();
+            siteCompleteUnlisten?.();
+            completeUnlisten?.();
+        };
     }, []);
 
     const loadTemplateList = async () => {
@@ -111,6 +270,19 @@ export default function HomePage() {
             setProfileList(list);
         } catch (e) {
             console.error('加载配置列表失败:', e);
+        }
+    };
+
+    const loadSelectedProfileData = async (profileName: string) => {
+        try {
+            const store = await invoke<{
+                profiles: Record<string, Profile>;
+            }>('get_profiles');
+            setSelectedProfileData(store.profiles[profileName] ?? null);
+            setSiteLoginTests({});
+        } catch (e) {
+            console.error('加载身份详情失败:', e);
+            setSelectedProfileData(null);
         }
     };
 
@@ -147,18 +319,47 @@ export default function HomePage() {
         }
     };
 
-    const saveTemplate = async () => {
-        const name = currentTemplateName || newTemplateName;
-        if (!name) return;
+    const getTemplateName = (explicitName?: string) => {
+        const candidates = [explicitName, currentTemplateName, newTemplateName]
+            .map((value) => value?.trim() || '')
+            .filter((value) => value.length > 0);
+
+        return candidates[0] || '';
+    };
+
+    const withSelectedProfile = (templateValue: Template, profileName: string = selectedProfile) => ({
+        ...templateValue,
+        profile: profileName,
+    });
+
+    const persistTemplateToDisk = async (
+        templateToSave: Template = withSelectedProfile(template),
+        explicitName?: string,
+    ) => {
+        const name = getTemplateName(explicitName);
+        if (!name) {
+            return false;
+        }
+
         try {
-            const t = { ...template, profile: selectedProfile };
-            await invoke('save_template', { name, template: t });
+            await invoke('save_template', { name, template: templateToSave });
+            setTemplate(templateToSave);
             setCurrentTemplateName(name);
             setNewTemplateName('');
             await loadTemplateList();
+            return true;
         } catch (e) {
             console.error('保存模板失败:', e);
+            return false;
         }
+    };
+
+    const autosaveTemplate = (templateToSave: Template = withSelectedProfile(template), explicitName?: string) => {
+        void persistTemplateToDisk(templateToSave, explicitName);
+    };
+
+    const saveTemplate = async () => {
+        await persistTemplateToDisk(withSelectedProfile(template));
     };
 
     const deleteTemplate = async () => {
@@ -187,19 +388,82 @@ export default function HomePage() {
         }
     };
 
-    const parseTorrent = async (path: string) => {
+    const matchTitle = useCallback(async (filename?: string, templateToMatch?: Template) => {
+        const name = filename || torrentInfo?.name;
+        const activeTemplate = templateToMatch || templateRef.current;
+
+        if (!name || !activeTemplate.ep_pattern || !activeTemplate.title_pattern) {
+            return '';
+        }
+
+        try {
+            const title = await invoke<string>('match_title', {
+                filename: name,
+                epPattern: activeTemplate.ep_pattern,
+                titlePattern: activeTemplate.title_pattern,
+            });
+
+            if (!templateToMatch) {
+                setTemplate((t) => ({ ...t, title }));
+            }
+
+            return title;
+        } catch (e) {
+            console.error('匹配标题失败:', e);
+            return '';
+        }
+    }, [torrentInfo?.name]);
+
+    const parseTorrent = useCallback(async (path: string) => {
         try {
             const info = await invoke<TorrentInfo>('parse_torrent', { path });
             setTorrentPath(path);
             setTorrentInfo(info);
             // Auto-match title if patterns are set
-            if (template.ep_pattern && template.title_pattern) {
-                matchTitle(info.name);
+            const activeTemplate = templateRef.current;
+            if (activeTemplate.ep_pattern && activeTemplate.title_pattern) {
+                const title = await matchTitle(info.name, activeTemplate);
+                if (title) {
+                    setTemplate((current) => ({ ...current, title }));
+                }
             }
         } catch (e) {
             console.error('解析种子文件失败:', e);
         }
-    };
+    }, [matchTitle]);
+
+    useEffect(() => {
+        let unlisten: UnlistenFn | null = null;
+
+        const setupDragDropListener = async () => {
+            unlisten = await getCurrentWindow().onDragDropEvent((event) => {
+                if (event.payload.type === 'enter' || event.payload.type === 'over') {
+                    setIsDragging(true);
+                    return;
+                }
+
+                if (event.payload.type === 'leave') {
+                    setIsDragging(false);
+                    return;
+                }
+
+                setIsDragging(false);
+                const droppedTorrentPath = event.payload.paths.find((path) =>
+                    path.toLowerCase().endsWith('.torrent'),
+                );
+
+                if (droppedTorrentPath) {
+                    void parseTorrent(droppedTorrentPath);
+                }
+            });
+        };
+
+        void setupDragDropListener();
+
+        return () => {
+            unlisten?.();
+        };
+    }, [parseTorrent]);
 
     
     const saveOkpExecutablePath = async (path: string) => {
@@ -231,38 +495,247 @@ export default function HomePage() {
         await saveOkpExecutablePath('');
     };
 
-    const matchTitle = async (filename?: string) => {
-        const name = filename || torrentInfo?.name;
-        if (!name || !template.ep_pattern || !template.title_pattern) return;
+    const handlePatternBlur = async (field: 'ep_pattern' | 'title_pattern', value: string) => {
+        const nextTemplate = withSelectedProfile({ ...templateRef.current, [field]: value } as Template);
+        const matchedTitle = await matchTitle(undefined, nextTemplate);
+        const templateToSave = matchedTitle
+            ? { ...nextTemplate, title: matchedTitle }
+            : nextTemplate;
+
+        setTemplate(templateToSave);
+        await persistTemplateToDisk(templateToSave);
+    };
+
+    const getErrorMessage = (error: unknown) => {
+        if (typeof error === 'string') {
+            return error;
+        }
+
+        if (error instanceof Error) {
+            return error.message;
+        }
+
+        return '发布失败，请查看日志输出。';
+    };
+
+    const clearSiteLoginTest = (siteCode: string) => {
+        setSiteLoginTests((current) => {
+            if (!(siteCode in current)) {
+                return current;
+            }
+
+            const nextState = { ...current };
+            delete nextState[siteCode];
+            return nextState;
+        });
+    };
+
+    const handleSiteLoginTest = async (site: SiteDefinition) => {
+        if (!selectedProfileData || !site.loginEnabled) {
+            return;
+        }
+
+        const rawText = getSiteCookieText(selectedProfileData.site_cookies, site.key);
+        if (!rawText.trim()) {
+            setSiteLoginTests((current) => ({
+                ...current,
+                [site.key]: {
+                    status: 'error',
+                    message: `请先在身份页面配置 ${site.label} 的 Cookie。`,
+                },
+            }));
+            return;
+        }
+
+        setSiteLoginTests((current) => ({
+            ...current,
+            [site.key]: {
+                status: 'testing',
+                message: `正在测试 ${site.label} 登录状态...`,
+            },
+        }));
+
         try {
-            const title = await invoke<string>('match_title', {
-                filename: name,
-                epPattern: template.ep_pattern,
-                titlePattern: template.title_pattern,
+            const expectedName = String(selectedProfileData[site.nameField] ?? '').trim();
+            const result = await invoke<SiteLoginTestResult>('test_site_login', {
+                site: site.key,
+                cookieText: rawText,
+                userAgent: selectedProfileData.user_agent.trim() || null,
+                expectedName: expectedName || null,
             });
-            setTemplate((t) => ({ ...t, title }));
-        } catch (e) {
-            console.error('匹配标题失败:', e);
+
+            setSiteLoginTests((current) => ({
+                ...current,
+                [site.key]: {
+                    status: result.success ? 'success' : 'error',
+                    message: result.message,
+                },
+            }));
+        } catch (error) {
+            setSiteLoginTests((current) => ({
+                ...current,
+                [site.key]: {
+                    status: 'error',
+                    message: getErrorMessage(error),
+                },
+            }));
         }
     };
+
+    const getSiteLoginStateBadgeClass = (status: SiteLoginTestState['status']): string => {
+        switch (status) {
+            case 'testing':
+                return 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200';
+            case 'success':
+                return 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200';
+            case 'error':
+                return 'border-red-400/40 bg-red-500/10 text-red-200';
+            default:
+                return 'border-slate-600 bg-slate-700/40 text-slate-300';
+        }
+    };
+
+    const getPublishStatusClass = (status: PublishConsoleSite['status']) => {
+        switch (status) {
+            case 'running':
+                return 'text-cyan-300';
+            case 'success':
+                return 'text-emerald-300';
+            case 'error':
+                return 'text-red-300';
+            default:
+                return 'text-slate-400';
+        }
+    };
+
+    const selectedSiteKeys = useMemo(
+        () => siteDefinitions.filter((site) => template.sites[site.key]).map((site) => site.key),
+        [template.sites],
+    );
+
+    const siteRows = useMemo(
+        () =>
+            siteDefinitions.map((site) => {
+                const publishState = publishSites[site.key] ?? null;
+                const loginState = siteLoginTests[site.key];
+
+                if (!selectedProfileData) {
+                    return {
+                        site,
+                        identityText: '未选择身份',
+                        identityClass: 'text-slate-500',
+                        identityTitle: '请先选择身份配置',
+                        loginState,
+                        publishState,
+                    };
+                }
+
+                if (site.loginEnabled) {
+                    const rawText = getSiteCookieText(selectedProfileData.site_cookies, site.key);
+                    const summary = getCookiePanelSummary(rawText);
+                    const hasCookies = summary.cookieCount > 0;
+
+                    return {
+                        site,
+                        identityText: hasCookies
+                            ? `${summary.remainingText} / ${summary.earliestExpiryText}`
+                            : '未配置 Cookie',
+                        identityClass: hasCookies
+                            ? getRemainingTextClass(summary.earliestExpiry)
+                            : 'text-slate-500',
+                        identityTitle: hasCookies
+                            ? `${site.label} 已配置 ${summary.cookieCount} 条 Cookie`
+                            : `尚未配置 ${site.label} Cookie`,
+                        loginState,
+                        publishState,
+                    };
+                }
+
+                const accountName = String(selectedProfileData[site.nameField] ?? '').trim();
+                const tokenValue = site.tokenField
+                    ? String(selectedProfileData[site.tokenField] ?? '').trim()
+                    : '';
+                const isConfigured = accountName.length > 0 && tokenValue.length > 0;
+
+                return {
+                    site,
+                    identityText: isConfigured ? 'API 身份已配置' : '缺少账号或令牌',
+                    identityClass: isConfigured ? 'text-emerald-300' : 'text-yellow-300',
+                    identityTitle: isConfigured
+                        ? `${site.label} 已配置 API 身份`
+                        : `${site.label} 需要账号名称和 API 令牌`,
+                    loginState,
+                    publishState,
+                };
+            }),
+        [publishSites, selectedProfileData, siteLoginTests, template.sites],
+    );
+
     // Publish
     const handlePublish = async () => {
         if (!torrentPath) return;
         if (!selectedProfile) return;
         if (!okpExecutablePath) return;
+        if (selectedSiteKeys.length === 0) return;
         if (isPublishing) return;
+
+        setPublishSites(
+            Object.fromEntries(
+                siteDefinitions
+                    .filter((site) => template.sites[site.key])
+                    .map((site) => [
+                        site.key,
+                        {
+                            siteCode: site.key,
+                            siteLabel: site.label,
+                            lines: [],
+                            status: 'running' as const,
+                            message: '等待 OKP 输出...',
+                        },
+                    ]),
+            ),
+        );
+        setIsPublishComplete(false);
+        setPublishResult(null);
         setShowConsole(true);
         setIsPublishing(true);
+
         try {
             await invoke('publish', {
                 request: {
                     torrent_path: torrentPath,
                     template_name: currentTemplateName,
                     profile_name: selectedProfile,
+                    template: {
+                        ...template,
+                        profile: selectedProfile,
+                    },
                 },
             });
         } catch (e) {
             console.error('发布失败:', e);
+            setPublishSites((current) => {
+                if (Object.keys(current).length === 0) {
+                    return current;
+                }
+
+                const firstSiteCode = Object.keys(current)[0];
+                const firstSite = current[firstSiteCode];
+                return {
+                    ...current,
+                    [firstSiteCode]: {
+                        ...firstSite,
+                        status: 'error',
+                        message: getErrorMessage(e),
+                        lines: [...firstSite.lines, { text: getErrorMessage(e), isError: true }],
+                    },
+                };
+            });
+            setIsPublishComplete(true);
+            setPublishResult({
+                success: false,
+                message: getErrorMessage(e),
+            });
         } finally {
             setIsPublishing(false);
         }
@@ -281,26 +754,40 @@ export default function HomePage() {
     const handleDrop = useCallback((e: React.DragEvent) => {
         e.preventDefault();
         setIsDragging(false);
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            const file = files[0];
-            if (file.name.endsWith('.torrent')) {
-                // For Tauri, the drag-drop path can be accessed via the file
-                // In practice, Tauri's own drag-drop handling may be needed
-                parseTorrent(file.name);
-            }
+
+        const droppedFiles = Array.from(e.dataTransfer.files || []);
+        const droppedTorrent = droppedFiles.find((file) => file.name.toLowerCase().endsWith('.torrent'));
+        const droppedTorrentPath = droppedTorrent
+            ? ((droppedTorrent as File & { path?: string }).path ?? null)
+            : null;
+
+        if (droppedTorrentPath) {
+            void parseTorrent(droppedTorrentPath);
+            return;
         }
-    }, []);
+
+        const uriList = e.dataTransfer.getData('text/uri-list');
+        const uriPath = uriList ? getTorrentPathFromUriList(uriList) : null;
+        if (uriPath && uriPath.toLowerCase().endsWith('.torrent')) {
+            void parseTorrent(uriPath);
+        }
+    }, [parseTorrent]);
 
     const updateField = (field: keyof Template, value: string) => {
         setTemplate((t) => ({ ...t, [field]: value }));
     };
 
     const toggleSite = (site: keyof SiteSelection) => {
-        setTemplate((t) => ({
-            ...t,
-            sites: { ...t.sites, [site]: !t.sites[site] },
-        }));
+        setTemplate((t) => {
+            const nextTemplate = {
+                ...t,
+                sites: { ...t.sites, [site]: !t.sites[site] },
+            };
+
+            clearSiteLoginTest(site);
+            autosaveTemplate(withSelectedProfile(nextTemplate));
+            return nextTemplate;
+        });
     };
 
     return (
@@ -326,6 +813,12 @@ export default function HomePage() {
                             type="text"
                             value={newTemplateName}
                             onChange={(e) => setNewTemplateName(e.target.value)}
+                                onBlur={(e) => {
+                                    const trimmedName = e.target.value.trim();
+                                    if (!currentTemplateName && trimmedName) {
+                                        autosaveTemplate(withSelectedProfile(templateRef.current), trimmedName);
+                                    }
+                                }}
                             placeholder="新模板名称"
                             className="w-40 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                         />
@@ -394,7 +887,9 @@ export default function HomePage() {
                                 type="text"
                                 value={template.ep_pattern}
                                 onChange={(e) => updateField('ep_pattern', e.target.value)}
-                                onBlur={() => matchTitle()}
+                                onBlur={(e) => {
+                                    void handlePatternBlur('ep_pattern', e.target.value);
+                                }}
                                 placeholder="如: (?P<ep>\d+)"
                                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
                             />
@@ -405,7 +900,9 @@ export default function HomePage() {
                                 type="text"
                                 value={template.title_pattern}
                                 onChange={(e) => updateField('title_pattern', e.target.value)}
-                                onBlur={() => matchTitle()}
+                                onBlur={(e) => {
+                                    void handlePatternBlur('title_pattern', e.target.value);
+                                }}
                                 placeholder="如: [Group] Title - <ep>"
                                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
@@ -417,6 +914,10 @@ export default function HomePage() {
                             type="text"
                             value={template.title}
                             onChange={(e) => updateField('title', e.target.value)}
+                                onBlur={(e) => autosaveTemplate(withSelectedProfile({
+                                    ...templateRef.current,
+                                    title: e.target.value,
+                                }))}
                             placeholder="标题将自动生成或手动输入"
                             className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                         />
@@ -433,6 +934,10 @@ export default function HomePage() {
                                 type="text"
                                 value={template.poster}
                                 onChange={(e) => updateField('poster', e.target.value)}
+                                onBlur={(e) => autosaveTemplate(withSelectedProfile({
+                                    ...templateRef.current,
+                                    poster: e.target.value,
+                                }))}
                                 placeholder="海报图片 URL"
                                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
@@ -443,6 +948,10 @@ export default function HomePage() {
                                 type="text"
                                 value={template.about}
                                 onChange={(e) => updateField('about', e.target.value)}
+                                onBlur={(e) => autosaveTemplate(withSelectedProfile({
+                                    ...templateRef.current,
+                                    about: e.target.value,
+                                }))}
                                 placeholder="简介或联系方式"
                                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
@@ -454,6 +963,10 @@ export default function HomePage() {
                             type="text"
                             value={template.tags}
                             onChange={(e) => updateField('tags', e.target.value)}
+                            onBlur={(e) => autosaveTemplate(withSelectedProfile({
+                                ...templateRef.current,
+                                tags: e.target.value,
+                            }))}
                             placeholder="以逗号分隔，如: Anime, TV, Chinese"
                             className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                         />
@@ -472,6 +985,10 @@ export default function HomePage() {
                         <textarea
                             value={template.description}
                             onChange={(e) => updateField('description', e.target.value)}
+                            onBlur={(e) => autosaveTemplate(withSelectedProfile({
+                                ...templateRef.current,
+                                description: e.target.value,
+                            }))}
                             placeholder="使用 Markdown 格式编写发布描述..."
                             rows={6}
                             className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono resize-y"
@@ -487,7 +1004,11 @@ export default function HomePage() {
                             <label className="text-xs text-slate-500 mb-1 block">身份选择</label>
                             <select
                                 value={selectedProfile}
-                                onChange={(e) => setSelectedProfile(e.target.value)}
+                                onChange={(e) => {
+                                    const profileName = e.target.value;
+                                    setSelectedProfile(profileName);
+                                    autosaveTemplate(withSelectedProfile(templateRef.current, profileName));
+                                }}
                                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             >
                                 <option value="">选择身份配置...</option>
@@ -532,41 +1053,109 @@ export default function HomePage() {
                         </p>
                     </div>
                     <div className="mt-3">
-                        <label className="text-xs text-slate-500 mb-2 block">站点选择</label>
-                        <div className="flex flex-wrap gap-3">
-                            {siteLabels.map(({ key, label }) => (
-                                <label
-                                    key={key}
-                                    className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer"
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={template.sites[key]}
-                                        onChange={() => toggleSite(key)}
-                                        className="w-4 h-4 rounded bg-slate-800 border-slate-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
-                                    />
-                                    {label}
-                                </label>
-                            ))}
+                        <label className="mb-2 block text-xs text-slate-500">发布站点</label>
+                        <div className="overflow-hidden rounded-lg border border-slate-700 bg-slate-900/60">
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full text-left text-sm text-slate-300">
+                                    <thead className="bg-slate-800/80 text-xs uppercase tracking-wide text-slate-500">
+                                        <tr>
+                                            <th className="w-16 px-4 py-3 font-medium">选择</th>
+                                            <th className="px-4 py-3 font-medium">站点</th>
+                                            <th className="px-4 py-3 font-medium">身份状态</th>
+                                            <th className="w-36 px-4 py-3 font-medium">Cookie 测试</th>
+                                            <th className="w-44 px-4 py-3 font-medium">发布状态</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {siteRows.map(({ site, identityText, identityClass, identityTitle, loginState, publishState }) => (
+                                            <tr key={site.key} className="border-t border-slate-800/80">
+                                                <td className="px-4 py-3 align-middle">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={template.sites[site.key]}
+                                                        onChange={() => toggleSite(site.key)}
+                                                        className="h-4 w-4 rounded border-slate-600 bg-slate-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                                                    />
+                                                </td>
+                                                <td className="px-4 py-3 align-middle font-medium text-slate-100">
+                                                    {site.label}
+                                                </td>
+                                                <td className="px-4 py-3 align-middle">
+                                                    <div className={identityClass} title={identityTitle}>
+                                                        {identityText}
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-3 align-middle">
+                                                    {site.loginEnabled ? (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                void handleSiteLoginTest(site);
+                                                            }}
+                                                            disabled={!selectedProfileData || loginState?.status === 'testing'}
+                                                            title={loginState?.message ?? `测试 ${site.label} 登录`}
+                                                            className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-100 transition-colors hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                                                        >
+                                                            {loginState?.status === 'testing' ? (
+                                                                <>
+                                                                    <Loader2 size={12} className="animate-spin" />
+                                                                    测试中
+                                                                </>
+                                                            ) : loginState ? (
+                                                                <span
+                                                                    className={`rounded-full border px-2 py-0.5 ${getSiteLoginStateBadgeClass(loginState.status)}`}
+                                                                >
+                                                                    {loginState.status === 'success' ? '通过' : '重试'}
+                                                                </span>
+                                                            ) : (
+                                                                '测试登录'
+                                                            )}
+                                                        </button>
+                                                    ) : (
+                                                        <span className="text-xs text-slate-500">不适用</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-3 align-middle">
+                                                    <div className={getPublishStatusClass(publishState?.status ?? 'idle')}>
+                                                        {publishState?.message || '未发布'}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </section>
 
-                {/* Publish Button */}
                 <section>
                     <button
                         onClick={handlePublish}
-                        disabled={!torrentPath || !selectedProfile || !okpExecutablePath || isPublishing}
+                        disabled={
+                            !torrentPath ||
+                            !selectedProfile ||
+                            !okpExecutablePath ||
+                            isPublishing ||
+                            selectedSiteKeys.length === 0
+                        }
                         className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 disabled:from-slate-600 disabled:to-slate-600 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-all shadow-lg shadow-emerald-500/20"
                     >
                         <Send size={18} />
-                        一键发布！
+                        发布已选站点
                     </button>
                 </section>
             </div>
 
-            {/* Modals */}
-            <ConsoleModal isOpen={showConsole} onClose={() => setShowConsole(false)} />
+            <ConsoleModal
+                isOpen={showConsole}
+                onClose={() => setShowConsole(false)}
+                sites={siteDefinitions
+                    .map((site) => publishSites[site.key])
+                    .filter((site): site is PublishConsoleSite => Boolean(site))}
+                isComplete={isPublishComplete}
+                result={publishResult}
+            />
             <MarkdownPreview
                 isOpen={showPreview}
                 onClose={() => setShowPreview(false)}

@@ -608,11 +608,6 @@ export default function HomePage() {
         }
     };
 
-    const selectedSiteKeys = useMemo(
-        () => siteDefinitions.filter((site) => template.sites[site.key]).map((site) => site.key),
-        [template.sites],
-    );
-
     const siteRows = useMemo(
         () =>
             siteDefinitions.map((site) => {
@@ -622,6 +617,8 @@ export default function HomePage() {
                 if (!selectedProfileData) {
                     return {
                         site,
+                        selectable: false,
+                        selectDisabledReason: '请先选择身份配置',
                         identityText: '未选择身份',
                         identityClass: 'text-slate-500',
                         identityTitle: '请先选择身份配置',
@@ -637,6 +634,10 @@ export default function HomePage() {
 
                     return {
                         site,
+                        selectable: hasCookies,
+                        selectDisabledReason: hasCookies
+                            ? ''
+                            : `请先在身份页面配置 ${site.label} 的 Cookie`,
                         identityText: hasCookies
                             ? `${summary.remainingText} / ${summary.earliestExpiryText}`
                             : '未配置 Cookie',
@@ -655,21 +656,63 @@ export default function HomePage() {
                 const tokenValue = site.tokenField
                     ? String(selectedProfileData[site.tokenField] ?? '').trim()
                     : '';
-                const isConfigured = accountName.length > 0 && tokenValue.length > 0;
+                const hasToken = tokenValue.length > 0;
 
                 return {
                     site,
-                    identityText: isConfigured ? 'API 身份已配置' : '缺少账号或令牌',
-                    identityClass: isConfigured ? 'text-emerald-300' : 'text-yellow-300',
-                    identityTitle: isConfigured
-                        ? `${site.label} 已配置 API 身份`
-                        : `${site.label} 需要账号名称和 API 令牌`,
+                    selectable: hasToken,
+                    selectDisabledReason: hasToken
+                        ? ''
+                        : `${site.label} 缺少 API 令牌`,
+                    identityText: hasToken
+                        ? accountName.length > 0
+                            ? 'API 身份已配置'
+                            : 'API 令牌已配置'
+                        : '缺少 API 令牌',
+                    identityClass: hasToken ? 'text-emerald-300' : 'text-yellow-300',
+                    identityTitle: hasToken
+                        ? `${site.label} 已配置 API 令牌`
+                        : `${site.label} 需要 API 令牌`,
                     loginState,
                     publishState,
                 };
             }),
         [publishSites, selectedProfileData, siteLoginTests, template.sites],
     );
+
+    const selectedSiteKeys = useMemo(
+        () =>
+            siteRows
+                .filter((row) => row.selectable && template.sites[row.site.key])
+                .map((row) => row.site.key),
+        [siteRows, template.sites],
+    );
+
+    useEffect(() => {
+        const selectableSiteKeys = new Set(
+            siteRows.filter((row) => row.selectable).map((row) => row.site.key),
+        );
+        const hasInvalidSelection = Object.entries(template.sites).some(
+            ([siteKey, enabled]) => enabled && !selectableSiteKeys.has(siteKey as keyof SiteSelection),
+        );
+
+        if (!hasInvalidSelection) {
+            return;
+        }
+
+        setTemplate((current) => {
+            const nextSites = { ...current.sites };
+            for (const siteKey of Object.keys(nextSites) as (keyof SiteSelection)[]) {
+                if (nextSites[siteKey] && !selectableSiteKeys.has(siteKey)) {
+                    nextSites[siteKey] = false;
+                }
+            }
+
+            const nextTemplate = { ...current, sites: nextSites };
+            autosaveTemplate(withSelectedProfile(nextTemplate));
+            return nextTemplate;
+        });
+    }, [siteRows]);
 
     // Publish
     const handlePublish = async () => {
@@ -778,6 +821,11 @@ export default function HomePage() {
     };
 
     const toggleSite = (site: keyof SiteSelection) => {
+        const targetSiteRow = siteRows.find((row) => row.site.key === site);
+        if (!targetSiteRow?.selectable) {
+            return;
+        }
+
         setTemplate((t) => {
             const nextTemplate = {
                 ...t,
@@ -1067,13 +1115,15 @@ export default function HomePage() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {siteRows.map(({ site, identityText, identityClass, identityTitle, loginState, publishState }) => (
-                                            <tr key={site.key} className="border-t border-slate-800/80">
+                                        {siteRows.map(({ site, selectable, selectDisabledReason, identityText, identityClass, identityTitle, loginState, publishState }) => (
+                                            <tr key={site.key} className={`border-t border-slate-800/80 ${selectable ? '' : 'opacity-60'}`}>
                                                 <td className="px-4 py-3 align-middle">
                                                     <input
                                                         type="checkbox"
                                                         checked={template.sites[site.key]}
+                                                        disabled={!selectable}
                                                         onChange={() => toggleSite(site.key)}
+                                                        title={selectable ? `选择 ${site.label}` : selectDisabledReason}
                                                         className="h-4 w-4 rounded border-slate-600 bg-slate-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
                                                     />
                                                 </td>

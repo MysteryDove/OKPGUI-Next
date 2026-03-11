@@ -56,7 +56,7 @@ const SITE_CONFIGS: &[SiteConfig] = &[
     },
     SiteConfig {
         code: "acgrip",
-        login_url: "https://acg.rip/signin",
+        login_url: "https://acg.rip/users/sign_in",
         test_url: "https://acg.rip/cp/posts/upload",
         cookie_domains: ACGRIP_COOKIE_DOMAINS,
     },

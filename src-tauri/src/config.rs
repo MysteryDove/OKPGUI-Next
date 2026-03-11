@@ -21,6 +21,8 @@ pub struct Template {
     pub about: String,
     pub tags: String,
     pub description: String,
+    #[serde(default)]
+    pub description_html: String,
     pub profile: String,
     pub title: String,
     pub sites: SiteSelection,

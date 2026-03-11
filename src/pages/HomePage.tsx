@@ -6,7 +6,6 @@ import { open } from '@tauri-apps/plugin-dialog';
 import {
     FolderOpen,
     Trash2,
-    Eye,
     Send,
     Loader2,
 } from 'lucide-react';
@@ -17,9 +16,10 @@ import ConsoleModal, {
     PublishOutput,
     PublishSiteComplete,
 } from '../components/ConsoleModal';
-import MarkdownPreview from '../components/MarkdownPreview';
+import PublishContentEditor from '../components/PublishContentEditor';
 import TagInput from '../components/TagInput';
 import { getCookiePanelSummary, getRemainingTextClass, getSiteCookieText, SiteCookies } from '../utils/cookieUtils';
+import { renderMarkdownToHtml } from '../utils/markdown';
 import { DEFAULT_OKP_TAGS } from '../utils/okpTags';
 import { getPublishStatusTextClass, getSiteLoginStateBadgeClass, SiteLoginStatus } from '../utils/siteStatus';
 
@@ -39,6 +39,7 @@ interface Template {
     about: string;
     tags: string;
     description: string;
+    description_html: string;
     profile: string;
     title: string;
     sites: SiteSelection;
@@ -88,6 +89,7 @@ const defaultTemplate: Template = {
     about: '',
     tags: DEFAULT_OKP_TAGS,
     description: '',
+    description_html: '',
     profile: '',
     title: '',
     sites: {
@@ -105,6 +107,11 @@ function normalizeTemplate(template?: Partial<Template>): Template {
         ...defaultTemplate,
         ...template,
         tags: typeof template?.tags === 'string' ? template.tags : defaultTemplate.tags,
+        description: typeof template?.description === 'string' ? template.description : defaultTemplate.description,
+        description_html:
+            typeof template?.description_html === 'string'
+                ? template.description_html
+                : defaultTemplate.description_html,
         sites: {
             ...defaultTemplate.sites,
             ...template?.sites,
@@ -169,7 +176,6 @@ export default function HomePage() {
 
     // Modal state
     const [showConsole, setShowConsole] = useState(false);
-    const [showPreview, setShowPreview] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [isPublishing, setIsPublishing] = useState(false);
     const [publishSites, setPublishSites] = useState<Record<string, PublishConsoleSite>>({});
@@ -177,6 +183,8 @@ export default function HomePage() {
     const [publishResult, setPublishResult] = useState<PublishComplete | null>(null);
     const [siteLoginTests, setSiteLoginTests] = useState<Record<string, SiteLoginTestState>>({});
     const templateRef = useRef(template);
+    const lastPersistedDescriptionRef = useRef(defaultTemplate.description);
+    const lastPersistedDescriptionHtmlRef = useRef(defaultTemplate.description_html);
 
     // Load templates and profiles on mount
     useEffect(() => {
@@ -188,6 +196,24 @@ export default function HomePage() {
     useEffect(() => {
         templateRef.current = template;
     }, [template]);
+
+    useEffect(() => {
+        const hasPendingDescriptionSave =
+            template.description !== lastPersistedDescriptionRef.current ||
+            template.description_html !== lastPersistedDescriptionHtmlRef.current;
+
+        if (!hasPendingDescriptionSave) {
+            return;
+        }
+
+        const saveTimer = window.setTimeout(() => {
+            void persistTemplateToDisk(withSelectedProfile(templateRef.current));
+        }, 700);
+
+        return () => {
+            window.clearTimeout(saveTimer);
+        };
+    }, [template.description, template.description_html]);
 
     useEffect(() => {
         if (!selectedProfile) {
@@ -313,6 +339,8 @@ export default function HomePage() {
 
             if (initialTemplateName && config.templates[initialTemplateName]) {
                 const nextTemplate = normalizeTemplate(config.templates[initialTemplateName]);
+                lastPersistedDescriptionRef.current = nextTemplate.description;
+                lastPersistedDescriptionHtmlRef.current = nextTemplate.description_html;
                 setCurrentTemplateName(initialTemplateName);
                 setTemplate(nextTemplate);
                 setSelectedProfile(nextTemplate.profile || '');
@@ -329,6 +357,8 @@ export default function HomePage() {
             }>('get_config');
             if (config.templates[name]) {
                 const nextTemplate = normalizeTemplate(config.templates[name]);
+                lastPersistedDescriptionRef.current = nextTemplate.description;
+                lastPersistedDescriptionHtmlRef.current = nextTemplate.description_html;
                 setCurrentTemplateName(name);
                 setNewTemplateName('');
                 setTemplate(nextTemplate);
@@ -360,6 +390,8 @@ export default function HomePage() {
 
         try {
             await invoke('save_template', { name, template: templateToSave });
+            lastPersistedDescriptionRef.current = templateToSave.description;
+            lastPersistedDescriptionHtmlRef.current = templateToSave.description_html;
             setTemplate(templateToSave);
             setCurrentTemplateName(name);
             setNewTemplateName('');
@@ -381,6 +413,8 @@ export default function HomePage() {
             await invoke('delete_template', { name: currentTemplateName });
             setCurrentTemplateName('');
             setNewTemplateName('');
+            lastPersistedDescriptionRef.current = defaultTemplate.description;
+            lastPersistedDescriptionHtmlRef.current = defaultTemplate.description_html;
             setTemplate(defaultTemplate);
             setSelectedProfile('');
             setSiteLoginTests({});
@@ -811,6 +845,13 @@ export default function HomePage() {
     const getTemplateWithFieldValue = (field: keyof Template, value: string): Template =>
         withSelectedProfile({ ...templateRef.current, [field]: value } as Template);
 
+    const handleTransformMarkdownToHtml = () => {
+        const nextHtml = renderMarkdownToHtml(templateRef.current.description);
+        const nextTemplate = getTemplateWithFieldValue('description_html', nextHtml);
+        setTemplate(nextTemplate);
+        autosaveTemplate(nextTemplate);
+    };
+
     const toggleSite = (site: keyof SiteSelection) => {
         const targetSiteRow = siteRows.find((row) => row.site.key === site);
         if (!targetSiteRow?.selectable) {
@@ -993,23 +1034,12 @@ export default function HomePage() {
                         </p>
                     </div>
                     <div className="mt-3">
-                        <div className="flex items-center justify-between mb-1">
-                            <label className="text-xs text-slate-500">描述 (Markdown)</label>
-                            <button
-                                onClick={() => setShowPreview(true)}
-                                className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300"
-                            >
-                                <Eye size={12} />
-                                预览
-                            </button>
-                        </div>
-                        <textarea
-                            value={template.description}
-                            onChange={(e) => updateField('description', e.target.value)}
-                            onBlur={(e) => autosaveTemplate(getTemplateWithFieldValue('description', e.target.value))}
-                            placeholder="使用 Markdown 格式编写发布描述..."
-                            rows={6}
-                            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono resize-y"
+                        <PublishContentEditor
+                            markdown={template.description}
+                            html={template.description_html}
+                            onMarkdownChange={(value) => updateField('description', value)}
+                            onHtmlChange={(value) => updateField('description_html', value)}
+                            onTransformMarkdownToHtml={handleTransformMarkdownToHtml}
                         />
                     </div>
                 </section>
@@ -1175,11 +1205,6 @@ export default function HomePage() {
                     .filter((site): site is PublishConsoleSite => Boolean(site))}
                 isComplete={isPublishComplete}
                 result={publishResult}
-            />
-            <MarkdownPreview
-                isOpen={showPreview}
-                onClose={() => setShowPreview(false)}
-                content={template.description}
             />
         </div>
     );

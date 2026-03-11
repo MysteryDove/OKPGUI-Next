@@ -1,4 +1,6 @@
 @import "@yaireo/tagify/dist/tagify.css";
+@import "@uiw/react-md-editor/markdown-editor.css";
+@import "@uiw/react-markdown-preview/markdown.css";
 @import "tailwindcss";
 
 @layer base {
@@ -189,4 +191,108 @@
 .tagify__dropdown .tagify__dropdown__item:hover {
   background: rgba(16, 185, 129, 0.16) !important;
   color: rgb(236 253 245) !important;
+}
+
+.okp-md-editor-shell {
+  background: rgb(15 23 42);
+}
+
+.okp-md-editor-shell .w-md-editor {
+  background: rgb(15 23 42);
+  color: rgb(226 232 240);
+  box-shadow: none;
+}
+
+.okp-md-editor-shell .w-md-editor-toolbar {
+  border-bottom: 1px solid rgb(51 65 85);
+  background: rgba(15, 23, 42, 0.92);
+}
+
+.okp-md-editor-shell .w-md-editor-toolbar li > button,
+.okp-md-editor-shell .w-md-editor-toolbar li > button svg,
+.okp-md-editor-shell .w-md-editor-toolbar li > button span {
+  color: rgb(226 232 240);
+  fill: currentColor;
+}
+
+.okp-md-editor-shell .w-md-editor-toolbar li > button:hover,
+.okp-md-editor-shell .w-md-editor-toolbar li > button:focus {
+  background: rgba(51, 65, 85, 0.85);
+}
+
+.okp-md-editor-shell .w-md-editor-text-pre,
+.okp-md-editor-shell .w-md-editor-text-input,
+.okp-md-editor-shell .w-md-editor-text {
+  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace !important;
+  font-size: 0.875rem !important;
+  line-height: 1.7 !important;
+}
+
+.okp-md-editor-shell .w-md-editor-text-pre,
+.okp-md-editor-shell .w-md-editor-text-input {
+  color: rgb(241 245 249) !important;
+}
+
+.okp-md-editor-shell .w-md-editor-text-input {
+  caret-color: rgb(16 185 129);
+}
+
+.okp-md-editor-shell .w-md-editor-area,
+.okp-md-editor-shell .w-md-editor-text {
+  background: rgb(2 6 23);
+}
+
+.okp-md-editor-shell .w-md-editor-bar {
+  display: none;
+}
+
+.okp-md-preview,
+.okp-md-preview .wmde-markdown {
+  background: transparent !important;
+  color: rgb(203 213 225) !important;
+}
+
+.okp-md-preview .wmde-markdown {
+  font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  line-height: 1.75;
+}
+
+.okp-md-preview .wmde-markdown h1,
+.okp-md-preview .wmde-markdown h2,
+.okp-md-preview .wmde-markdown h3,
+.okp-md-preview .wmde-markdown h4,
+.okp-md-preview .wmde-markdown h5,
+.okp-md-preview .wmde-markdown h6 {
+  color: rgb(248 250 252) !important;
+  border-bottom-color: rgb(51 65 85) !important;
+}
+
+.okp-md-preview .wmde-markdown a {
+  color: rgb(34 211 238) !important;
+}
+
+.okp-md-preview .wmde-markdown code {
+  background: rgba(51, 65, 85, 0.75) !important;
+  color: rgb(167 243 208) !important;
+}
+
+.okp-md-preview .wmde-markdown pre {
+  background: rgb(2 6 23) !important;
+  border: 1px solid rgb(51 65 85);
+}
+
+.okp-md-preview .wmde-markdown blockquote {
+  color: rgb(148 163 184) !important;
+  border-left-color: rgba(16, 185, 129, 0.65) !important;
+}
+
+.okp-md-preview .wmde-markdown table th,
+.okp-md-preview .wmde-markdown table td {
+  border-color: rgb(51 65 85) !important;
+}
+
+.okp-md-preview .wmde-markdown img {
+  max-width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(51 65 85);
 }

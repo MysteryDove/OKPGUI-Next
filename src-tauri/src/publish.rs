@@ -73,7 +73,8 @@ struct PublishArtifacts {
     workspace_dir: PathBuf,
     template_path: PathBuf,
     cookies_path: PathBuf,
-    description_path: PathBuf,
+    markdown_description_path: PathBuf,
+    html_description_path: PathBuf,
     log_path: PathBuf,
 }
 
@@ -366,7 +367,8 @@ fn create_publish_artifacts(app: &AppHandle, site_code: &str) -> Result<PublishA
     Ok(PublishArtifacts {
         template_path: workspace_dir.join("template.toml"),
         cookies_path: workspace_dir.join("cookies.txt"),
-        description_path: workspace_dir.join("description.md"),
+        markdown_description_path: workspace_dir.join("description.md"),
+        html_description_path: workspace_dir.join("description.html"),
         log_path: workspace_dir.join("okp.log"),
         workspace_dir,
     })
@@ -377,7 +379,8 @@ fn cleanup_publish_artifacts(artifacts: &PublishArtifacts, keep_log: bool) {
     if !KEEP_PUBLISH_COOKIES_FOR_DEBUG {
         let _ = std::fs::remove_file(&artifacts.cookies_path);
     }
-    let _ = std::fs::remove_file(&artifacts.description_path);
+    let _ = std::fs::remove_file(&artifacts.markdown_description_path);
+    let _ = std::fs::remove_file(&artifacts.html_description_path);
 
     if !keep_log {
         let _ = std::fs::remove_file(&artifacts.log_path);
@@ -479,6 +482,47 @@ fn escape_toml_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+fn site_prefers_html_content(site_code: &str) -> bool {
+    matches!(site_code, "dmhy" | "bangumi" | "acgnx_asia" | "acgnx_global")
+}
+
+fn select_publish_content_path<'a>(
+    template: &Template,
+    site: &SitePublishConfig,
+    artifacts: &'a PublishArtifacts,
+) -> Result<&'a Path, String> {
+    if matches!(site.code, "nyaa" | "acgrip") && template.description.trim().is_empty() {
+        return Err(format!(
+            "{} 需要 Markdown 发布内容，请先填写 Markdown，或不要只保留 HTML。",
+            site.label
+        ));
+    }
+
+    if site_prefers_html_content(site.code) && !template.description_html.trim().is_empty() {
+        return Ok(&artifacts.html_description_path);
+    }
+
+    Ok(&artifacts.markdown_description_path)
+}
+
+fn write_publish_description_files(
+    template: &Template,
+    artifacts: &PublishArtifacts,
+) -> Result<(), String> {
+    std::fs::write(&artifacts.markdown_description_path, &template.description)
+        .map_err(|e| format!("写入 description.md 失败: {}", e))?;
+
+    if template.description_html.trim().is_empty() {
+        let _ = std::fs::remove_file(&artifacts.html_description_path);
+        return Ok(());
+    }
+
+    std::fs::write(&artifacts.html_description_path, &template.description_html)
+        .map_err(|e| format!("写入 description.html 失败: {}", e))?;
+
+    Ok(())
+}
+
 fn generate_site_template_toml(
     app: &AppHandle,
     template: &Template,
@@ -496,14 +540,12 @@ fn generate_site_template_toml(
         return Err(format!("{} 的 API Token 不能为空。", site.label));
     }
 
-    let description_file_name = artifacts
-        .description_path
+    write_publish_description_files(template, artifacts)?;
+
+    let description_file_name = select_publish_content_path(template, site, artifacts)?
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| "无法生成发布内容文件名。".to_string())?;
-
-    std::fs::write(&artifacts.description_path, &template.description)
-        .map_err(|e| format!("写入 description.md 失败: {}", e))?;
 
     let mut toml_content = String::new();
     toml_content.push_str(&format!(
@@ -956,6 +998,66 @@ mod tests {
         let error =
             resolve_selected_okp_executable("   ").expect_err("expected empty configured path to error");
         assert!(error.contains("未选择 OKP 可执行文件"));
+    }
+
+    #[test]
+    fn test_select_publish_content_path_prefers_html_for_html_sites() {
+        let template = Template {
+            description: "# md".to_string(),
+            description_html: "<p>html</p>".to_string(),
+            ..Template::default()
+        };
+        let site = SitePublishConfig {
+            code: "dmhy",
+            label: "动漫花园",
+            account_name: "Team".to_string(),
+            token: None,
+            enabled: true,
+            uses_cookie: true,
+        };
+        let artifacts = PublishArtifacts {
+            workspace_dir: PathBuf::from("workspace"),
+            template_path: PathBuf::from("template.toml"),
+            cookies_path: PathBuf::from("cookies.txt"),
+            markdown_description_path: PathBuf::from("description.md"),
+            html_description_path: PathBuf::from("description.html"),
+            log_path: PathBuf::from("okp.log"),
+        };
+
+        let path = select_publish_content_path(&template, &site, &artifacts)
+            .expect("expected html-capable site to accept html content");
+
+        assert_eq!(path, Path::new("description.html"));
+    }
+
+    #[test]
+    fn test_select_publish_content_path_requires_markdown_for_acgrip() {
+        let template = Template {
+            description: String::new(),
+            description_html: "<p>html only</p>".to_string(),
+            ..Template::default()
+        };
+        let site = SitePublishConfig {
+            code: "acgrip",
+            label: "ACG.RIP",
+            account_name: "Team".to_string(),
+            token: None,
+            enabled: true,
+            uses_cookie: true,
+        };
+        let artifacts = PublishArtifacts {
+            workspace_dir: PathBuf::from("workspace"),
+            template_path: PathBuf::from("template.toml"),
+            cookies_path: PathBuf::from("cookies.txt"),
+            markdown_description_path: PathBuf::from("description.md"),
+            html_description_path: PathBuf::from("description.html"),
+            log_path: PathBuf::from("okp.log"),
+        };
+
+        let error = select_publish_content_path(&template, &site, &artifacts)
+            .expect_err("expected bbcode site to require markdown input");
+
+        assert!(error.contains("ACG.RIP"));
     }
 
     fn create_test_okp_layout(file_name: &str) -> PathBuf {

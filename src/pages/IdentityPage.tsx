@@ -685,7 +685,7 @@ export default function IdentityPage() {
                     </section>
 
                     <section>
-                        <label className="mb-1 block text-xs text-slate-500">用户代理</label>
+                        <label className="mb-1 block text-xs text-slate-500">UA</label>
                         <input
                             type="text"
                             value={profile.user_agent}
@@ -693,7 +693,7 @@ export default function IdentityPage() {
                             onBlur={(event) =>
                                 autosaveProfile(getProfileWithFieldValue('user_agent', event.target.value))
                             }
-                            placeholder="留空则使用默认用户代理"
+                            placeholder="留空则使用默认UA"
                             className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                         />
                     </section>

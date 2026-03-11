@@ -28,6 +28,12 @@ import {
     SiteCookies,
     updateSiteCookies,
 } from '../utils/cookieUtils';
+import {
+    getSiteLoginMessageClass,
+    getSiteLoginStateBadgeClass,
+    getSiteLoginStateLabel,
+    SiteLoginStatus,
+} from '../utils/siteStatus';
 
 interface Profile {
     cookies: string;
@@ -78,7 +84,7 @@ interface SiteLoginTestResult {
 }
 
 interface SiteLoginTestState {
-    status: 'testing' | 'success' | 'error';
+    status: SiteLoginStatus;
     message: string;
 }
 
@@ -140,45 +146,6 @@ function updateProfileSiteCookies(profile: Profile, siteCode: string, rawText: s
         site_cookies: siteCookies,
         cookies: buildMergedCookieText(siteCookies, profile.user_agent),
     };
-}
-
-function getSiteLoginStateBadgeClass(status: SiteLoginTestState['status']): string {
-    switch (status) {
-        case 'testing':
-            return 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200';
-        case 'success':
-            return 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200';
-        case 'error':
-            return 'border-red-400/40 bg-red-500/10 text-red-200';
-        default:
-            return 'border-slate-600 bg-slate-700/40 text-slate-300';
-    }
-}
-
-function getSiteLoginStateLabel(status: SiteLoginTestState['status']): string {
-    switch (status) {
-        case 'testing':
-            return '测试中';
-        case 'success':
-            return '通过';
-        case 'error':
-            return '失败';
-        default:
-            return '';
-    }
-}
-
-function getSiteLoginMessageClass(status: SiteLoginTestState['status']): string {
-    switch (status) {
-        case 'success':
-            return 'text-emerald-300';
-        case 'error':
-            return 'text-red-300';
-        case 'testing':
-            return 'text-cyan-300';
-        default:
-            return 'text-slate-400';
-    }
 }
 
 function normalizeProfile(profile?: Partial<Profile>): Profile {

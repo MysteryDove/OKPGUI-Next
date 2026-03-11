@@ -1,3 +1,4 @@
+@import "@yaireo/tagify/dist/tagify.css";
 @import "tailwindcss";
 
 @layer base {
@@ -33,5 +34,54 @@
   /* Checkbox styling */
   input[type="checkbox"] {
     accent-color: theme(colors.emerald.500);
+  }
+
+  .tagify.okp-tag-input {
+    --tags-border-color: theme(colors.slate.700);
+    --tags-hover-border-color: theme(colors.slate.600);
+    --tags-focus-border-color: theme(colors.emerald.500);
+    --tag-bg: rgba(16, 185, 129, 0.14);
+    --tag-hover: rgba(16, 185, 129, 0.24);
+    --tag-text-color: theme(colors.emerald.100);
+    --tag-text-color--edit: theme(colors.emerald.100);
+    --tag-remove-btn-color: theme(colors.emerald.100);
+    --tag-remove-btn-bg--hover: rgba(239, 68, 68, 0.85);
+    --input-color: theme(colors.slate.200);
+    --placeholder-color: theme(colors.slate.500);
+    --placeholder-color-focus: theme(colors.slate.500);
+    --tagify-dd-bg-color: theme(colors.slate.800);
+    --tagify-dd-text-color: theme(colors.slate.200);
+    --tagify-dd-color-primary: 16, 185, 129;
+    width: 100%;
+    min-height: 42px;
+    border-radius: 0.5rem;
+    background: theme(colors.slate.800);
+  }
+
+  .tagify.okp-tag-input.tagify--focus {
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.35);
+  }
+
+  .okp-tag-input .tagify__input {
+    margin: 6px;
+    min-height: 1.25rem;
+  }
+
+  .tagify__dropdown {
+    border-top-color: rgba(16, 185, 129, 0.5);
+  }
+
+  .tagify__dropdown__wrapper {
+    background: theme(colors.slate.800);
+    border: 1px solid theme(colors.slate.700);
+  }
+
+  .tagify__dropdown__item {
+    color: theme(colors.slate.200);
+  }
+
+  .tagify__dropdown__item--active {
+    background: rgba(16, 185, 129, 0.16);
+    color: theme(colors.emerald.100);
   }
 }

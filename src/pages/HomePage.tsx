@@ -19,7 +19,10 @@ import ConsoleModal, {
     PublishSiteComplete,
 } from '../components/ConsoleModal';
 import MarkdownPreview from '../components/MarkdownPreview';
+import TagInput from '../components/TagInput';
 import { getCookiePanelSummary, getRemainingTextClass, getSiteCookieText, SiteCookies } from '../utils/cookieUtils';
+import { DEFAULT_OKP_TAGS } from '../utils/okpTags';
+import { getPublishStatusTextClass, getSiteLoginStateBadgeClass, SiteLoginStatus } from '../utils/siteStatus';
 
 interface SiteSelection {
     dmhy: boolean;
@@ -61,7 +64,7 @@ interface SiteLoginTestResult {
 }
 
 interface SiteLoginTestState {
-    status: 'testing' | 'success' | 'error';
+    status: SiteLoginStatus;
     message: string;
 }
 
@@ -84,7 +87,7 @@ const defaultTemplate: Template = {
     title_pattern: '',
     poster: '',
     about: '',
-    tags: '',
+    tags: DEFAULT_OKP_TAGS,
     description: '',
     profile: '',
     title: '',
@@ -582,32 +585,6 @@ export default function HomePage() {
         }
     };
 
-    const getSiteLoginStateBadgeClass = (status: SiteLoginTestState['status']): string => {
-        switch (status) {
-            case 'testing':
-                return 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200';
-            case 'success':
-                return 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200';
-            case 'error':
-                return 'border-red-400/40 bg-red-500/10 text-red-200';
-            default:
-                return 'border-slate-600 bg-slate-700/40 text-slate-300';
-        }
-    };
-
-    const getPublishStatusClass = (status: PublishConsoleSite['status']) => {
-        switch (status) {
-            case 'running':
-                return 'text-cyan-300';
-            case 'success':
-                return 'text-emerald-300';
-            case 'error':
-                return 'text-red-300';
-            default:
-                return 'text-slate-400';
-        }
-    };
-
     const siteRows = useMemo(
         () =>
             siteDefinitions.map((site) => {
@@ -1007,17 +984,18 @@ export default function HomePage() {
                     </div>
                     <div className="mt-3">
                         <label className="text-xs text-slate-500 mb-1 block">标签</label>
-                        <input
-                            type="text"
+                        <TagInput
                             value={template.tags}
-                            onChange={(e) => updateField('tags', e.target.value)}
-                            onBlur={(e) => autosaveTemplate(withSelectedProfile({
+                            placeholder="输入 OKP 分类标签，如 Anime、TV、Raw"
+                            onChange={(nextTags) => updateField('tags', nextTags)}
+                            onBlur={(nextTags) => autosaveTemplate(withSelectedProfile({
                                 ...templateRef.current,
-                                tags: e.target.value,
+                                tags: nextTags,
                             }))}
-                            placeholder="以逗号分隔，如: Anime, TV, Chinese"
-                            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                         />
+                        <p className="mt-1 text-xs text-slate-500">
+                            使用 OKP 的分类标签，不是 bangumi.moe 原生 tag。会按旧版 OKPGUI 一样保存为逗号分隔字符串。
+                        </p>
                     </div>
                     <div className="mt-3">
                         <div className="flex items-center justify-between mb-1">
@@ -1166,7 +1144,7 @@ export default function HomePage() {
                                                     )}
                                                 </td>
                                                 <td className="px-4 py-3 align-middle">
-                                                    <div className={getPublishStatusClass(publishState?.status ?? 'idle')}>
+                                                    <div className={getPublishStatusTextClass(publishState?.status ?? 'idle')}>
                                                         {publishState?.message || '未发布'}
                                                     </div>
                                                 </td>

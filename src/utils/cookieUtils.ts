@@ -11,6 +11,10 @@ export interface SiteCookies {
     bangumi: SiteCookieStore;
 }
 
+export const COOKIE_SITE_CODES = ['dmhy', 'nyaa', 'acgrip', 'bangumi'] as const;
+
+export type CookieSiteCode = (typeof COOKIE_SITE_CODES)[number];
+
 export interface CookiePanelSummary {
     cookieCount: number;
     earliestExpiry: number | null;
@@ -35,19 +39,27 @@ interface ParsedCookieHeader {
 
 const DEFAULT_COOKIE_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
 
-export const siteCookieDomains: Record<string, string[]> = {
+export const siteCookieDomains: Record<CookieSiteCode, string[]> = {
     dmhy: ['share.dmhy.org', '.dmhy.org'],
     nyaa: ['nyaa.si', '.nyaa.si'],
     acgrip: ['acg.rip', '.acg.rip'],
     bangumi: ['bangumi.moe', '.bangumi.moe'],
 };
 
-export const emptySiteCookies = (): SiteCookies => ({
-    dmhy: { raw_text: '' },
-    nyaa: { raw_text: '' },
-    acgrip: { raw_text: '' },
-    bangumi: { raw_text: '' },
-});
+function isCookieSiteCode(siteCode: string): siteCode is CookieSiteCode {
+    return COOKIE_SITE_CODES.includes(siteCode as CookieSiteCode);
+}
+
+function createSiteCookies(mapper: (siteCode: CookieSiteCode) => SiteCookieStore): SiteCookies {
+    return {
+        dmhy: mapper('dmhy'),
+        nyaa: mapper('nyaa'),
+        acgrip: mapper('acgrip'),
+        bangumi: mapper('bangumi'),
+    };
+}
+
+export const emptySiteCookies = (): SiteCookies => createSiteCookies(() => ({ raw_text: '' }));
 
 export function normalizeDomain(domain: string): string {
     return domain.trim().replace(/^\./, '');
@@ -236,7 +248,7 @@ export function buildCustomCookieText(userAgent: string, cookieLines: ParsedCust
 
 export function extractSiteCookieText(cookieText: string, siteCode: string): string {
     const { userAgent, cookieLines } = parseCustomCookieText(cookieText);
-    const domains = siteCookieDomains[siteCode] ?? [];
+    const domains = isCookieSiteCode(siteCode) ? siteCookieDomains[siteCode] : [];
     const siteLines = cookieLines.filter((line) => {
         const parsedHeader = parseCookieHeader(line.cookieHeader, line.requestUrl);
         return matchesSiteDomain(parsedHeader.domain, domains);
@@ -245,12 +257,7 @@ export function extractSiteCookieText(cookieText: string, siteCode: string): str
 }
 
 export function buildSiteCookiesFromMergedCookieText(cookieText: string): SiteCookies {
-    return {
-        dmhy: { raw_text: extractSiteCookieText(cookieText, 'dmhy') },
-        nyaa: { raw_text: extractSiteCookieText(cookieText, 'nyaa') },
-        acgrip: { raw_text: extractSiteCookieText(cookieText, 'acgrip') },
-        bangumi: { raw_text: extractSiteCookieText(cookieText, 'bangumi') },
-    };
+    return createSiteCookies((siteCode) => ({ raw_text: extractSiteCookieText(cookieText, siteCode) }));
 }
 
 export function buildMergedCookieText(siteCookies: SiteCookies, fallbackUserAgent: string): string {
@@ -270,33 +277,13 @@ export function buildMergedCookieText(siteCookies: SiteCookies, fallbackUserAgen
 }
 
 export function getSiteCookieText(siteCookies: SiteCookies, siteCode: string): string {
-    switch (siteCode) {
-        case 'dmhy':
-            return siteCookies.dmhy.raw_text;
-        case 'nyaa':
-            return siteCookies.nyaa.raw_text;
-        case 'acgrip':
-            return siteCookies.acgrip.raw_text;
-        case 'bangumi':
-            return siteCookies.bangumi.raw_text;
-        default:
-            return '';
-    }
+    return isCookieSiteCode(siteCode) ? siteCookies[siteCode].raw_text : '';
 }
 
 export function updateSiteCookies(siteCookies: SiteCookies, siteCode: string, rawText: string): SiteCookies {
-    switch (siteCode) {
-        case 'dmhy':
-            return { ...siteCookies, dmhy: { raw_text: rawText } };
-        case 'nyaa':
-            return { ...siteCookies, nyaa: { raw_text: rawText } };
-        case 'acgrip':
-            return { ...siteCookies, acgrip: { raw_text: rawText } };
-        case 'bangumi':
-            return { ...siteCookies, bangumi: { raw_text: rawText } };
-        default:
-            return siteCookies;
-    }
+    return isCookieSiteCode(siteCode)
+        ? { ...siteCookies, [siteCode]: { raw_text: rawText } }
+        : siteCookies;
 }
 
 function formatExpiryDate(epochSeconds: number | null): string {

@@ -1,6 +1,7 @@
 import { Dialog, Transition } from '@headlessui/react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal, X } from 'lucide-react';
+import { getPublishStatusBadgeClass, getPublishStatusLabel } from '../utils/siteStatus';
 
 export interface PublishOutput {
     site_code: string;
@@ -64,32 +65,6 @@ export default function ConsoleModal({
         }
     }, [isOpen, activeSite, isComplete]);
 
-    const getSiteStatusClass = (status: PublishConsoleSite['status']) => {
-        switch (status) {
-            case 'running':
-                return 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200';
-            case 'success':
-                return 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200';
-            case 'error':
-                return 'border-red-400/40 bg-red-500/10 text-red-200';
-            default:
-                return 'border-slate-600 bg-slate-700/40 text-slate-300';
-        }
-    };
-
-    const getSiteStatusLabel = (status: PublishConsoleSite['status']) => {
-        switch (status) {
-            case 'running':
-                return '发布中';
-            case 'success':
-                return '成功';
-            case 'error':
-                return '失败';
-            default:
-                return '未开始';
-        }
-    };
-
     return (
         <Transition appear show={isOpen} as={Fragment}>
             <Dialog as="div" className="relative z-50" onClose={() => {}}>
@@ -151,7 +126,7 @@ export default function ConsoleModal({
                                                 >
                                                     <div className="font-medium">{site.siteLabel}</div>
                                                     <div className="mt-1 text-[11px] text-slate-400">
-                                                        {site.message || getSiteStatusLabel(site.status)}
+                                                        {site.message || getPublishStatusLabel(site.status)}
                                                     </div>
                                                 </button>
                                             );
@@ -175,9 +150,9 @@ export default function ConsoleModal({
                                                     </div>
                                                 </div>
                                                 <span
-                                                    className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${getSiteStatusClass(activeSite.status)}`}
+                                                    className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${getPublishStatusBadgeClass(activeSite.status)}`}
                                                 >
-                                                    {getSiteStatusLabel(activeSite.status)}
+                                                    {getPublishStatusLabel(activeSite.status)}
                                                 </span>
                                             </div>
                                             {activeSite.lines.map((line, index) => (

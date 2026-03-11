@@ -89,6 +89,23 @@ struct SitePublishResult {
     updated_cookie_text: Option<String>,
 }
 
+impl SitePublishConfig {
+    fn build_result(
+        &self,
+        success: bool,
+        message: impl Into<String>,
+        updated_cookie_text: Option<String>,
+    ) -> SitePublishResult {
+        SitePublishResult {
+            site_code: self.code.to_string(),
+            site_label: self.label.to_string(),
+            success,
+            message: message.into(),
+            updated_cookie_text,
+        }
+    }
+}
+
 struct PublishGuard;
 
 impl PublishGuard {
@@ -110,6 +127,10 @@ impl Drop for PublishGuard {
     }
 }
 
+fn emit_publish_event<T: Serialize + Clone>(app: &AppHandle, event: &str, payload: T) {
+    let _ = app.emit(event, payload);
+}
+
 fn emit_publish_output(
     app: &AppHandle,
     site_code: &str,
@@ -117,7 +138,8 @@ fn emit_publish_output(
     line: impl Into<String>,
     is_stderr: bool,
 ) {
-    let _ = app.emit(
+    emit_publish_event(
+        app,
         "publish-output",
         PublishOutput {
             site_code: site_code.to_string(),
@@ -129,7 +151,8 @@ fn emit_publish_output(
 }
 
 fn emit_publish_site_complete(app: &AppHandle, result: &SitePublishResult) {
-    let _ = app.emit(
+    emit_publish_event(
+        app,
         "publish-site-complete",
         PublishSiteComplete {
             site_code: result.site_code.clone(),
@@ -598,15 +621,7 @@ fn run_site_publish(
 ) -> SitePublishResult {
     let artifacts = match create_publish_artifacts(app, site.code) {
         Ok(artifacts) => artifacts,
-        Err(error) => {
-            return SitePublishResult {
-                site_code: site.code.to_string(),
-                site_label: site.label.to_string(),
-                success: false,
-                message: error,
-                updated_cookie_text: None,
-            }
-        }
+        Err(error) => return site.build_result(false, error, None),
     };
 
     let result = (|| -> Result<SitePublishResult, String> {
@@ -708,23 +723,15 @@ fn run_site_publish(
 
         if status.success() {
             cleanup_publish_artifacts(&artifacts, false);
-            Ok(SitePublishResult {
-                site_code: site.code.to_string(),
-                site_label: site.label.to_string(),
-                success: true,
-                message: format!("{} 发布完成", site.label),
-                updated_cookie_text,
-            })
+            Ok(site.build_result(true, format!("{} 发布完成", site.label), updated_cookie_text))
         } else {
             let failure_message = build_failure_message(status.code(), &artifacts.log_path);
             cleanup_publish_artifacts(&artifacts, true);
-            Ok(SitePublishResult {
-                site_code: site.code.to_string(),
-                site_label: site.label.to_string(),
-                success: false,
-                message: format!("{}: {}", site.label, failure_message),
+            Ok(site.build_result(
+                false,
+                format!("{}: {}", site.label, failure_message),
                 updated_cookie_text,
-            })
+            ))
         }
     })();
 
@@ -739,13 +746,7 @@ fn run_site_publish(
                 true,
             );
             cleanup_publish_artifacts(&artifacts, true);
-            SitePublishResult {
-                site_code: site.code.to_string(),
-                site_label: site.label.to_string(),
-                success: false,
-                message: error,
-                updated_cookie_text: None,
-            }
+            site.build_result(false, error, None)
         }
     }
 }
@@ -834,13 +835,7 @@ fn run_publish(app: &AppHandle, request: &PublishRequest) -> Result<String, Stri
     for (site, handle) in handles {
         let result = match handle.join() {
             Ok(result) => result,
-            Err(_) => SitePublishResult {
-                site_code: site.code.to_string(),
-                site_label: site.label.to_string(),
-                success: false,
-                message: format!("{} 发布线程异常退出", site.label),
-                updated_cookie_text: None,
-            },
+            Err(_) => site.build_result(false, format!("{} 发布线程异常退出", site.label), None),
         };
         results.push(result);
     }
@@ -874,7 +869,7 @@ pub async fn publish(app: AppHandle, request: PublishRequest) -> Result<(), Stri
         },
     };
 
-    let _ = app.emit("publish-complete", completion);
+    emit_publish_event(&app, "publish-complete", completion);
     result.map(|_| ())
 }
 

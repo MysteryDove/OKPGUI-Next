@@ -163,10 +163,6 @@ fn matches_site_domain(domain: &str, candidates: &[&str]) -> bool {
     })
 }
 
-fn parse_cookie_text(cookie_text: &str) -> Vec<NetscapeCookieLine> {
-    parse_cookie_payload(cookie_text).netscape_cookies
-}
-
 fn parse_cookie_payload(cookie_text: &str) -> ParsedCookieText {
     let mut parsed = ParsedCookieText::default();
 
@@ -365,27 +361,6 @@ fn collect_cookie_records(parsed: ParsedCookieText) -> Vec<CookieRecord> {
 
     records.extend(parsed.netscape_cookies.into_iter().map(netscape_cookie_to_record));
     deduplicate_cookie_records(records)
-}
-
-fn deduplicate_netscape_cookies(cookies: Vec<NetscapeCookieLine>) -> Vec<NetscapeCookieLine> {
-    let mut seen = std::collections::HashSet::new();
-    let mut deduplicated = Vec::new();
-
-    for cookie in cookies.into_iter().rev() {
-        let key = format!(
-            "{}\0{}\0{}",
-            normalize_domain(&cookie.domain),
-            cookie.path,
-            cookie.name
-        );
-
-        if seen.insert(key) {
-            deduplicated.push(cookie);
-        }
-    }
-
-    deduplicated.reverse();
-    deduplicated
 }
 
 fn normalize_true_false_flag(flag: &str, default_value: bool) -> String {

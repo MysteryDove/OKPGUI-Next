@@ -986,7 +986,7 @@ export default function HomePage() {
                         <label className="text-xs text-slate-500 mb-1 block">标签</label>
                         <TagInput
                             value={template.tags}
-                            placeholder="输入 OKP 分类标签，如 Anime、TV、Raw"
+                            placeholder=""
                             onChange={(nextTags) => updateField('tags', nextTags)}
                             onBlur={(nextTags) => autosaveTemplate(withSelectedProfile({
                                 ...templateRef.current,
@@ -994,7 +994,7 @@ export default function HomePage() {
                             }))}
                         />
                         <p className="mt-1 text-xs text-slate-500">
-                            使用 OKP 的分类标签，不是 bangumi.moe 原生 tag。会按旧版 OKPGUI 一样保存为逗号分隔字符串。
+                            使用 OKP 的分类标签，不是 bangumi.moe 原生 tag。按回车完成tag输入
                         </p>
                     </div>
                     <div className="mt-3">

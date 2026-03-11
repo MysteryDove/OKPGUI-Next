@@ -40,15 +40,15 @@
     --tags-border-color: theme(colors.slate.700);
     --tags-hover-border-color: theme(colors.slate.600);
     --tags-focus-border-color: theme(colors.emerald.500);
-    --tag-bg: rgba(16, 185, 129, 0.14);
-    --tag-hover: rgba(16, 185, 129, 0.24);
-    --tag-text-color: theme(colors.emerald.100);
-    --tag-text-color--edit: theme(colors.emerald.100);
-    --tag-remove-btn-color: theme(colors.emerald.100);
+    --tag-bg: rgba(30, 41, 59, 0.95);
+    --tag-hover: rgba(51, 65, 85, 0.98);
+    --tag-text-color: theme(colors.slate.200);
+    --tag-text-color--edit: theme(colors.slate.100);
+    --tag-remove-btn-color: theme(colors.slate.400);
     --tag-remove-btn-bg--hover: rgba(239, 68, 68, 0.85);
     --input-color: theme(colors.slate.200);
     --placeholder-color: theme(colors.slate.500);
-    --placeholder-color-focus: theme(colors.slate.500);
+    --placeholder-color-focus: theme(colors.slate.400);
     --tagify-dd-bg-color: theme(colors.slate.800);
     --tagify-dd-text-color: theme(colors.slate.200);
     --tagify-dd-color-primary: 16, 185, 129;
@@ -56,15 +56,60 @@
     min-height: 42px;
     border-radius: 0.5rem;
     background: theme(colors.slate.800);
+    color: theme(colors.slate.200);
+    font-size: 0.875rem;
+    line-height: 1.25rem;
   }
 
   .tagify.okp-tag-input.tagify--focus {
     box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.35);
   }
 
+  .okp-tag-input .tagify__tag {
+    margin-inline: 6px 0;
+    margin-block: 6px;
+  }
+
+  .okp-tag-input .tagify__tag > div {
+    border: 1px solid rgba(71, 85, 105, 0.9);
+    padding: 0.28rem 0.55rem;
+  }
+
+  .okp-tag-input .tagify__tag > div::before {
+    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.55) inset;
+  }
+
+  .okp-tag-input .tagify__tag__removeBtn {
+    color: theme(colors.slate.500);
+  }
+
   .okp-tag-input .tagify__input {
     margin: 6px;
     min-height: 1.25rem;
+    padding: 0.28rem 0.1rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    color: theme(colors.slate.200);
+    caret-color: theme(colors.emerald.400);
+  }
+
+  .okp-tag-input .tagify__input::before,
+  .okp-tag-input .tagify__input::after {
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+
+  .okp-tag-input.tagify--empty .tagify__input::before {
+    color: theme(colors.slate.500);
+    opacity: 1;
+  }
+
+  .okp-tag-input.tagify--focus.tagify--empty .tagify__input::before {
+    color: theme(colors.slate.400);
+  }
+
+  .okp-tag-input .tagify__input:focus::before {
+    color: theme(colors.slate.400);
   }
 
   .tagify__dropdown {
@@ -74,14 +119,74 @@
   .tagify__dropdown__wrapper {
     background: theme(colors.slate.800);
     border: 1px solid theme(colors.slate.700);
+    box-shadow: 0 18px 40px rgba(2, 6, 23, 0.48);
   }
 
   .tagify__dropdown__item {
     color: theme(colors.slate.200);
+    font-size: 0.875rem;
   }
 
   .tagify__dropdown__item--active {
     background: rgba(16, 185, 129, 0.16);
     color: theme(colors.emerald.100);
   }
+}
+
+.tagify.okp-tag-input {
+  color: rgb(226 232 240);
+}
+
+.tagify.okp-tag-input .tagify__input,
+.tagify.okp-tag-input .tagify__input > span {
+  color: rgb(226 232 240) !important;
+}
+
+.tagify.okp-tag-input .tagify__tag > div,
+.tagify.okp-tag-input .tagify__tag > div > span,
+.tagify.okp-tag-input .tagify__tag-text {
+  color: rgb(241 245 249) !important;
+}
+
+.tagify.okp-tag-input .tagify__tag > div {
+  background: rgb(51 65 85) !important;
+  border-color: rgb(71 85 105) !important;
+}
+
+.tagify.okp-tag-input .tagify__tag > div::before {
+  background: rgb(51 65 85) !important;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.55) inset !important;
+}
+
+.tagify.okp-tag-input .tagify__tag__removeBtn {
+  color: rgb(203 213 225) !important;
+}
+
+.tagify.okp-tag-input .tagify__input::before,
+.tagify.okp-tag-input .tagify__input::after,
+.tagify.okp-tag-input.tagify--empty .tagify__input::before,
+.tagify.okp-tag-input.tagify--focus.tagify--empty .tagify__input::before,
+.tagify.okp-tag-input .tagify__input:focus::before {
+  color: rgb(100 116 139) !important;
+  opacity: 1 !important;
+}
+
+.tagify__dropdown,
+.tagify__dropdown .tagify__dropdown__wrapper {
+  background: rgb(30 41 59) !important;
+}
+
+.tagify__dropdown .tagify__dropdown__wrapper {
+  border: 1px solid rgb(51 65 85) !important;
+}
+
+.tagify__dropdown .tagify__dropdown__item {
+  background: transparent !important;
+  color: rgb(226 232 240) !important;
+}
+
+.tagify__dropdown .tagify__dropdown__item--active,
+.tagify__dropdown .tagify__dropdown__item:hover {
+  background: rgba(16, 185, 129, 0.16) !important;
+  color: rgb(236 253 245) !important;
 }

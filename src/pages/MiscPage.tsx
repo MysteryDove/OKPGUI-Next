@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Save, Globe, Info, ExternalLink } from 'lucide-react';
+import { Globe, Info, ExternalLink } from 'lucide-react';
 
 interface ProxyConfig {
     proxy_type: string;
@@ -26,17 +26,21 @@ export default function MiscPage() {
         }
     };
 
-    const saveProxy = async () => {
+    const persistProxy = async (nextProxyType: string, nextProxyHost: string) => {
         try {
             await invoke('save_proxy', {
-                proxyType,
-                proxyHost,
+                proxyType: nextProxyType,
+                proxyHost: nextProxyHost,
             });
             setSaved(true);
             setTimeout(() => setSaved(false), 2000);
         } catch (e) {
             console.error('保存代理设置失败:', e);
         }
+    };
+
+    const autosaveProxy = (nextProxyType: string = proxyType, nextProxyHost: string = proxyHost) => {
+        void persistProxy(nextProxyType, nextProxyHost);
     };
 
     return (
@@ -53,7 +57,11 @@ export default function MiscPage() {
                             <label className="text-xs text-slate-500 mb-1 block">代理类型</label>
                             <select
                                 value={proxyType}
-                                onChange={(e) => setProxyType(e.target.value)}
+                                onChange={(e) => {
+                                    const nextProxyType = e.target.value;
+                                    setProxyType(nextProxyType);
+                                    autosaveProxy(nextProxyType, proxyHost);
+                                }}
                                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             >
                                 <option value="none">不使用代理</option>
@@ -66,18 +74,15 @@ export default function MiscPage() {
                                 type="text"
                                 value={proxyHost}
                                 onChange={(e) => setProxyHost(e.target.value)}
+                                onBlur={(e) => autosaveProxy(proxyType, e.target.value)}
                                 disabled={proxyType === 'none'}
                                 placeholder="如: http://127.0.0.1:7890"
                                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
                         </div>
-                        <button
-                            onClick={saveProxy}
-                            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded-lg transition-colors"
-                        >
-                            <Save size={14} />
-                            {saved ? '已保存 ✓' : '保存代理设置'}
-                        </button>
+                        <p className="text-xs text-slate-500">
+                            {saved ? '代理设置已自动保存。' : '代理类型修改后立即保存，代理地址在失焦后自动保存。'}
+                        </p>
                     </div>
                 </section>
 

@@ -1,12 +1,19 @@
 import { Transition } from '@headlessui/react';
 import { ComponentType, useEffect, useRef, useState } from 'react';
 import Sidebar, { Page } from './components/Sidebar';
+import ContentTemplatesPage from './pages/ContentTemplatesPage';
 import HomePage from './pages/HomePage';
 import IdentityPage from './pages/IdentityPage';
 import MiscPage from './pages/MiscPage';
+import QuickPublishPage from './pages/QuickPublishPage';
+import QuickPublishTemplatesPage from './pages/QuickPublishTemplatesPage';
+import { getStartupPagePreference } from './utils/appPreferences';
 
 const pageComponents: Record<Page, ComponentType> = {
     home: HomePage,
+    quick_publish: QuickPublishPage,
+    quick_publish_templates: QuickPublishTemplatesPage,
+    content_templates: ContentTemplatesPage,
     identity: IdentityPage,
     misc: MiscPage,
 };
@@ -16,8 +23,8 @@ const PAGE_LEAVE_TIMING = 'ease-[cubic-bezier(0.32,0,0.67,0)]';
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'okpgui:sidebar-collapsed';
 
 export default function App() {
-    const [activePage, setActivePage] = useState<Page>('home');
-    const [displayPage, setDisplayPage] = useState<Page>('home');
+    const [activePage, setActivePage] = useState<Page>(() => getStartupPagePreference());
+    const [displayPage, setDisplayPage] = useState<Page>(() => getStartupPagePreference());
     const [isPageVisible, setIsPageVisible] = useState(true);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
         if (typeof window === 'undefined') {
@@ -26,7 +33,7 @@ export default function App() {
 
         return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
     });
-    const pendingPageRef = useRef<Page>('home');
+    const pendingPageRef = useRef<Page>(getStartupPagePreference());
 
     useEffect(() => {
         pendingPageRef.current = activePage;

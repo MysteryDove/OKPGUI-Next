@@ -10,6 +10,7 @@ import {
     Trash2,
     Send,
     Loader2,
+    RefreshCw,
 } from 'lucide-react';
 import FileTree, { FileTreeNodeData } from '../components/FileTree';
 import ConsoleModal, {
@@ -37,6 +38,7 @@ interface SiteSelection {
 
 interface Template {
     ep_pattern: string;
+    resolution_pattern: string;
     title_pattern: string;
     poster: string;
     about: string;
@@ -52,6 +54,7 @@ interface Template {
 interface SitePublishHistoryEntry {
     last_published_at: string;
     last_published_episode: string;
+    last_published_resolution: string;
 }
 
 type SitePublishHistory = Record<keyof SiteSelection, SitePublishHistoryEntry>;
@@ -71,6 +74,7 @@ interface PublishAttemptContext {
     templateName: string;
     publishedAt: string;
     publishedEpisode: string;
+    publishedResolution: string;
     siteKeys: (keyof SiteSelection)[];
 }
 
@@ -78,6 +82,7 @@ interface TemplatePublishHistoryUpdate {
     site_key: keyof SiteSelection;
     last_published_at: string;
     last_published_episode: string;
+    last_published_resolution: string;
 }
 
 interface Profile {
@@ -123,6 +128,12 @@ interface TorrentInfo {
     file_tree: FileTreeNodeData;
 }
 
+interface ParsedTitleDetails {
+    title: string;
+    episode: string;
+    resolution: string;
+}
+
 const siteKeys: (keyof SiteSelection)[] = [
     'dmhy',
     'nyaa',
@@ -142,12 +153,12 @@ const publishTimestampFormatter = new Intl.DateTimeFormat('zh-CN', {
 });
 
 const createDefaultPublishHistory = (): SitePublishHistory => ({
-    dmhy: { last_published_at: '', last_published_episode: '' },
-    nyaa: { last_published_at: '', last_published_episode: '' },
-    acgrip: { last_published_at: '', last_published_episode: '' },
-    bangumi: { last_published_at: '', last_published_episode: '' },
-    acgnx_asia: { last_published_at: '', last_published_episode: '' },
-    acgnx_global: { last_published_at: '', last_published_episode: '' },
+    dmhy: { last_published_at: '', last_published_episode: '', last_published_resolution: '' },
+    nyaa: { last_published_at: '', last_published_episode: '', last_published_resolution: '' },
+    acgrip: { last_published_at: '', last_published_episode: '', last_published_resolution: '' },
+    bangumi: { last_published_at: '', last_published_episode: '', last_published_resolution: '' },
+    acgnx_asia: { last_published_at: '', last_published_episode: '', last_published_resolution: '' },
+    acgnx_global: { last_published_at: '', last_published_episode: '', last_published_resolution: '' },
 });
 
 const normalizePublishHistory = (history?: Partial<SitePublishHistory>): SitePublishHistory => {
@@ -164,6 +175,10 @@ const normalizePublishHistory = (history?: Partial<SitePublishHistory>): SitePub
                 typeof entry?.last_published_episode === 'string'
                     ? entry.last_published_episode
                     : defaultHistory[siteKey].last_published_episode,
+            last_published_resolution:
+                typeof entry?.last_published_resolution === 'string'
+                    ? entry.last_published_resolution
+                    : defaultHistory[siteKey].last_published_resolution,
         };
         return accumulator;
     }, {} as SitePublishHistory);
@@ -229,7 +244,18 @@ const buildTemplateOptions = (templates: Record<string, Partial<Template>>): Tem
         })
         .map(({ sortValue: _sortValue, ...option }) => option);
 
-const getPublishedEpisodeLabel = (value: string) => value.trim() || '不适用';
+const getPublishedValue = (value: string) => value.trim();
+
+const getPublishedVersionLabel = (entry: SitePublishHistoryEntry) => {
+    const episode = getPublishedValue(entry.last_published_episode);
+    const resolution = getPublishedValue(entry.last_published_resolution);
+
+    if (episode && resolution) {
+        return `${episode} / ${resolution}`;
+    }
+
+    return episode || resolution || '不适用';
+};
 
 const mergePublishHistory = (
     templateValue: Template,
@@ -241,6 +267,7 @@ const mergePublishHistory = (
         nextPublishHistory[update.site_key] = {
             last_published_at: update.last_published_at,
             last_published_episode: update.last_published_episode,
+            last_published_resolution: update.last_published_resolution,
         };
     }
 
@@ -252,6 +279,7 @@ const mergePublishHistory = (
 
 const defaultTemplate: Template = {
     ep_pattern: '',
+    resolution_pattern: '',
     title_pattern: '',
     poster: '',
     about: '',
@@ -380,6 +408,7 @@ export default function HomePage() {
     const [showConsole, setShowConsole] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [isPublishing, setIsPublishing] = useState(false);
+    const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
     const [publishSites, setPublishSites] = useState<Record<string, PublishConsoleSite>>({});
     const [isPublishComplete, setIsPublishComplete] = useState(false);
     const [publishResult, setPublishResult] = useState<PublishComplete | null>(null);
@@ -656,20 +685,18 @@ export default function HomePage() {
         const name = filename || torrentInfo?.name;
         const activeTemplate = templateToMatch || templateRef.current;
 
-        if (!name || !activeTemplate.ep_pattern || !activeTemplate.title_pattern) {
+        if (!name || !activeTemplate.title_pattern.trim()) {
             return '';
         }
 
         try {
-            const title = await invoke<string>('match_title', {
+            const details = await invoke<ParsedTitleDetails>('parse_title_details', {
                 filename: name,
                 epPattern: activeTemplate.ep_pattern,
+                resolutionPattern: activeTemplate.resolution_pattern,
                 titlePattern: activeTemplate.title_pattern,
             });
-
-            if (!templateToMatch) {
-                setTemplate((t) => ({ ...t, title }));
-            }
+            const title = details.title;
 
             return title;
         } catch (e) {
@@ -683,12 +710,12 @@ export default function HomePage() {
             const info = await invoke<TorrentInfo>('parse_torrent', { path });
             setTorrentPath(path);
             setTorrentInfo(info);
-            // Auto-match title if patterns are set
+            // Only prefill an empty title; never overwrite a user-edited final title.
             const activeTemplate = templateRef.current;
-            if (activeTemplate.ep_pattern && activeTemplate.title_pattern) {
+            if (!activeTemplate.title.trim() && activeTemplate.title_pattern.trim()) {
                 const title = await matchTitle(info.name, activeTemplate);
                 if (title) {
-                    setTemplate((current) => ({ ...current, title }));
+                    setTemplate((current) => (current.title.trim() ? current : { ...current, title }));
                 }
             }
         } catch (e) {
@@ -817,31 +844,29 @@ export default function HomePage() {
         }
     };
 
-    const resolvePublishEpisode = async (templateToPublish: Template, filename?: string) => {
-        if (!filename || !templateToPublish.ep_pattern || !templateToPublish.title_pattern) {
-            return '不适用';
+    const resolvePublishDetails = async (
+        templateToPublish: Template,
+        filename?: string,
+    ): Promise<Pick<ParsedTitleDetails, 'episode' | 'resolution'>> => {
+        if (!filename) {
+            return { episode: '', resolution: '' };
         }
 
         try {
-            const title = await invoke<string>('match_title', {
+            const details = await invoke<ParsedTitleDetails>('parse_title_details', {
                 filename,
                 epPattern: templateToPublish.ep_pattern,
+                resolutionPattern: templateToPublish.resolution_pattern,
                 titlePattern: templateToPublish.title_pattern,
             });
 
-            if (!title.trim()) {
-                return '不适用';
-            }
-
-            const episode = await invoke<string>('extract_episode_value', {
-                filename,
-                epPattern: templateToPublish.ep_pattern,
-            });
-
-            return getPublishedEpisodeLabel(episode);
+            return {
+                episode: getPublishedValue(details.episode),
+                resolution: getPublishedValue(details.resolution),
+            };
         } catch (e) {
-            console.error('提取发布集数失败:', e);
-            return '不适用';
+            console.error('提取发布信息失败:', e);
+            return { episode: '', resolution: '' };
         }
     };
 
@@ -860,6 +885,7 @@ export default function HomePage() {
                 site_key: siteKey,
                 last_published_at: publishAttempt.publishedAt,
                 last_published_episode: publishAttempt.publishedEpisode,
+                last_published_resolution: publishAttempt.publishedResolution,
             }));
 
         publishSiteSuccessRef.current = {};
@@ -884,15 +910,34 @@ export default function HomePage() {
         }
     };
 
-    const handlePatternBlur = async (field: 'ep_pattern' | 'title_pattern', value: string) => {
+    const handlePatternBlur = async (
+        field: 'ep_pattern' | 'resolution_pattern' | 'title_pattern',
+        value: string,
+    ) => {
         const nextTemplate = withSelectedProfile({ ...templateRef.current, [field]: value } as Template);
-        const matchedTitle = await matchTitle(undefined, nextTemplate);
-        const templateToSave = matchedTitle
-            ? { ...nextTemplate, title: matchedTitle }
-            : nextTemplate;
+        setTemplate(nextTemplate);
+        await persistTemplateToDisk(nextTemplate);
+    };
 
-        setTemplate(templateToSave);
-        await persistTemplateToDisk(templateToSave);
+    const handleGenerateTitle = async () => {
+        if (isGeneratingTitle) {
+            return;
+        }
+
+        setIsGeneratingTitle(true);
+
+        try {
+            const generatedTitle = await matchTitle();
+            if (!generatedTitle.trim()) {
+                return;
+            }
+
+            const nextTemplate = getTemplateWithFieldValue('title', generatedTitle);
+            setTemplate(nextTemplate);
+            await persistTemplateToDisk(nextTemplate);
+        } finally {
+            setIsGeneratingTitle(false);
+        }
     };
 
     const getErrorMessage = (error: unknown) => {
@@ -1127,10 +1172,13 @@ export default function HomePage() {
             return;
         }
 
+        const publishDetails = await resolvePublishDetails(templateToPublish, torrentInfo?.name);
+
         publishAttemptRef.current = {
             templateName: publishTemplateName,
             publishedAt: new Date().toISOString(),
-            publishedEpisode: await resolvePublishEpisode(templateToPublish, torrentInfo?.name),
+            publishedEpisode: publishDetails.episode,
+            publishedResolution: publishDetails.resolution,
             siteKeys: selectedSites.map((site) => site.key),
         };
         publishSiteSuccessRef.current = {};
@@ -1239,13 +1287,6 @@ export default function HomePage() {
 
     const getTemplateWithFieldValue = (field: keyof Template, value: string): Template =>
         withSelectedProfile({ ...templateRef.current, [field]: value } as Template);
-
-    const handleTransformMarkdownToHtml = () => {
-        const nextHtml = renderMarkdownToHtml(templateRef.current.description);
-        const nextTemplate = getTemplateWithFieldValue('description_html', nextHtml);
-        setTemplate(nextTemplate);
-        autosaveTemplate(nextTemplate);
-    };
 
     const toggleSite = (site: keyof SiteSelection) => {
         const targetSiteRow = siteRows.find((row) => row.site.key === site);
@@ -1365,10 +1406,10 @@ export default function HomePage() {
 
                 {/* Title Matching */}
                 <section>
-                    <h2 className="text-sm font-medium text-slate-400 mb-2">标题匹配</h2>
-                    <div className="grid grid-cols-2 gap-3">
+                    <h2 className="text-sm font-medium text-slate-400 mb-2">标题自动生成</h2>
+                    <div className="grid gap-3 md:grid-cols-3">
                         <div>
-                            <label className="text-xs text-slate-500 mb-1 block">标题模板匹配正则</label>
+                            <label className="text-xs text-slate-500 mb-1 block">集数匹配正则</label>
                             <input
                                 type="text"
                                 value={template.ep_pattern}
@@ -1381,6 +1422,19 @@ export default function HomePage() {
                             />
                         </div>
                         <div>
+                            <label className="text-xs text-slate-500 mb-1 block">分辨率匹配正则</label>
+                            <input
+                                type="text"
+                                value={template.resolution_pattern}
+                                onChange={(e) => updateField('resolution_pattern', e.target.value)}
+                                onBlur={(e) => {
+                                    void handlePatternBlur('resolution_pattern', e.target.value);
+                                }}
+                                placeholder="如: (?P<res>1080p|720p)"
+                                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                            />
+                        </div>
+                        <div>
                             <label className="text-xs text-slate-500 mb-1 block">标题模板</label>
                             <input
                                 type="text"
@@ -1389,19 +1443,33 @@ export default function HomePage() {
                                 onBlur={(e) => {
                                     void handlePatternBlur('title_pattern', e.target.value);
                                 }}
-                                placeholder="如: [Group] Title - <ep>"
+                                placeholder="如: [Group] Title - <ep> [<res>]"
                                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
                         </div>
                     </div>
+                    <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-500">
+                        <span>自动生成仅用于填充建议标题；最终发布时始终以你手动编辑后的“发布标题”为准。</span>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                void handleGenerateTitle();
+                            }}
+                            disabled={!torrentInfo?.name || !template.title_pattern.trim() || isGeneratingTitle}
+                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-100 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                            {isGeneratingTitle ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                            重新生成标题
+                        </button>
+                    </div>
                     <div className="mt-2">
-                        <label className="text-xs text-slate-500 mb-1 block">生成标题</label>
+                        <label className="text-xs text-slate-500 mb-1 block">发布标题</label>
                         <input
                             type="text"
                             value={template.title}
                             onChange={(e) => updateField('title', e.target.value)}
                             onBlur={(e) => autosaveTemplate(getTemplateWithFieldValue('title', e.target.value))}
-                            placeholder="标题将自动生成或手动输入"
+                            placeholder="最终发布标题，可手动编辑或使用上方按钮重新生成"
                             className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                         />
                     </div>
@@ -1448,11 +1516,11 @@ export default function HomePage() {
                     </div>
                     <div className="mt-3">
                         <PublishContentEditor
+                            contentKey={currentTemplateName || 'home-template'}
                             markdown={template.description}
                             html={template.description_html}
                             onMarkdownChange={(value) => updateField('description', value)}
                             onHtmlChange={(value) => updateField('description_html', value)}
-                            onTransformMarkdownToHtml={handleTransformMarkdownToHtml}
                         />
                     </div>
                 </section>
@@ -1523,7 +1591,7 @@ export default function HomePage() {
                                             <th className="w-16 px-4 py-3 font-medium">选择</th>
                                             <th className="px-4 py-3 font-medium">站点</th>
                                             <th className="w-40 px-4 py-3 font-medium">最后发布时间</th>
-                                            <th className="w-28 px-4 py-3 font-medium">最后发布集数</th>
+                                            <th className="w-32 px-4 py-3 font-medium">最后发布版本</th>
                                             <th className="px-4 py-3 font-medium">身份状态</th>
                                             <th className="w-36 px-4 py-3 font-medium">Cookie 测试</th>
                                             <th className="w-44 px-4 py-3 font-medium">发布状态</th>
@@ -1549,7 +1617,7 @@ export default function HomePage() {
                                                     {formatPublishTimestamp(template.publish_history[site.key].last_published_at)}
                                                 </td>
                                                 <td className="px-4 py-3 align-middle text-slate-300">
-                                                    {getPublishedEpisodeLabel(template.publish_history[site.key].last_published_episode)}
+                                                    {getPublishedVersionLabel(template.publish_history[site.key])}
                                                 </td>
                                                 <td className="px-4 py-3 align-middle">
                                                     <div className={identityClass} title={identityTitle}>

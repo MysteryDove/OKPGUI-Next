@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Globe, Info, ExternalLink } from 'lucide-react';
 import { useAppVersion } from '../utils/appVersion';
+import { getStartupPagePreference, setStartupPagePreference, type StartupPage } from '../utils/appPreferences';
 
 interface ProxyConfig {
     proxy_type: string;
@@ -12,6 +13,8 @@ export default function MiscPage() {
     const [proxyType, setProxyType] = useState('none');
     const [proxyHost, setProxyHost] = useState('');
     const [saved, setSaved] = useState(false);
+    const [startupPage, setStartupPage] = useState<StartupPage>(() => getStartupPagePreference());
+    const [startupPageSaved, setStartupPageSaved] = useState(false);
     const appVersion = useAppVersion();
 
     useEffect(() => {
@@ -45,9 +48,42 @@ export default function MiscPage() {
         void persistProxy(nextProxyType, nextProxyHost);
     };
 
+    const persistStartupPage = (nextStartupPage: StartupPage) => {
+        setStartupPagePreference(nextStartupPage);
+        setStartupPageSaved(true);
+        window.setTimeout(() => setStartupPageSaved(false), 2000);
+    };
+
     return (
         <div className="flex flex-col h-full overflow-y-auto">
             <div className="p-6 space-y-6">
+                <section>
+                    <h2 className="text-sm font-medium text-slate-400 mb-3 flex items-center gap-2">
+                        <Info size={16} />
+                        启动页面
+                    </h2>
+                    <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-4 space-y-3">
+                        <div>
+                            <label className="text-xs text-slate-500 mb-1 block">默认打开页面</label>
+                            <select
+                                value={startupPage}
+                                onChange={(e) => {
+                                    const nextStartupPage = e.target.value as StartupPage;
+                                    setStartupPage(nextStartupPage);
+                                    persistStartupPage(nextStartupPage);
+                                }}
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            >
+                                <option value="home">主页</option>
+                                <option value="quick_publish">模板发布主页</option>
+                            </select>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                            {startupPageSaved ? '启动页面已保存，下次打开时生效。' : '选择应用启动后默认进入的页面。'}
+                        </p>
+                    </div>
+                </section>
+
                 {/* Proxy Settings */}
                 <section>
                     <h2 className="text-sm font-medium text-slate-400 mb-3 flex items-center gap-2">

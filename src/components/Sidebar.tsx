@@ -1,8 +1,23 @@
 import { Transition } from '@headlessui/react';
-import { ChevronLeft, ChevronRight, Home, Settings, UserCircle } from 'lucide-react';
+import {
+    ChevronLeft,
+    ChevronRight,
+    ClipboardList,
+    FileText,
+    Home,
+    Send,
+    Settings,
+    UserCircle,
+} from 'lucide-react';
 import { useAppVersion } from '../utils/appVersion';
 
-export type Page = 'home' | 'identity' | 'misc';
+export type Page =
+    | 'home'
+    | 'quick_publish'
+    | 'quick_publish_templates'
+    | 'content_templates'
+    | 'identity'
+    | 'misc';
 
 interface SidebarProps {
     activePage: Page;
@@ -11,10 +26,26 @@ interface SidebarProps {
     onToggleCollapse: () => void;
 }
 
-const navItems: { key: Page; label: string; icon: typeof Home }[] = [
-    { key: 'home', label: '主页', icon: Home },
-    { key: 'identity', label: '身份管理器', icon: UserCircle },
-    { key: 'misc', label: '杂项', icon: Settings },
+const navSections: { title: string; items: { key: Page; label: string; icon: typeof Home }[] }[] = [
+    {
+        title: '现有工作流',
+        items: [{ key: 'home', label: '主页', icon: Home }],
+    },
+    {
+        title: '快速模板发布',
+        items: [
+            { key: 'quick_publish', label: '模板发布', icon: Send },
+            { key: 'quick_publish_templates', label: '发布模板管理', icon: ClipboardList },
+            { key: 'content_templates', label: '公共正文模板管理', icon: FileText },
+        ],
+    },
+    {
+        title: '系统',
+        items: [
+            { key: 'identity', label: '身份管理器', icon: UserCircle },
+            { key: 'misc', label: '杂项', icon: Settings },
+        ],
+    },
 ];
 
 export default function Sidebar({
@@ -64,83 +95,94 @@ export default function Sidebar({
 
             {/* Navigation */}
             <nav className="flex-1 py-3">
-                <div className={`space-y-1 ${isCollapsed ? 'px-2' : 'px-3'}`}>
-                    {navItems.map(({ key, label, icon: Icon }) => {
-                        const isActive = activePage === key;
+                <div className={`space-y-4 ${isCollapsed ? 'px-2' : 'px-3'}`}>
+                    {navSections.map((section) => (
+                        <div key={section.title}>
+                            {!isCollapsed ? (
+                                <div className="px-3 pb-2 text-[11px] uppercase tracking-[0.18em] text-slate-600">
+                                    {section.title}
+                                </div>
+                            ) : null}
+                            <div className="space-y-1">
+                                {section.items.map(({ key, label, icon: Icon }) => {
+                                    const isActive = activePage === key;
 
-                        return (
-                            <button
-                                key={key}
-                                onClick={() => onPageChange(key)}
-                                aria-label={label}
-                                title={label}
-                                className={`relative h-11 w-full overflow-hidden rounded-xl text-sm transition-[color,transform] duration-200 ease-out ${
-                                    isActive
-                                        ? 'text-emerald-100'
-                                        : 'text-slate-400 hover:text-slate-100'
-                                }`}
-                            >
-                                <Transition
-                                    show={isActive}
-                                    as="span"
-                                    aria-hidden="true"
-                                    className="absolute inset-0 rounded-xl border border-emerald-400/20 bg-slate-700/80 shadow-[0_14px_30px_rgba(15,23,42,0.35)]"
-                                    enter="transition duration-220 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                                    enterFrom="scale-[0.97] opacity-0"
-                                    enterTo="scale-100 opacity-100"
-                                    leave="transition duration-180 ease-[cubic-bezier(0.4,0,0.2,1)]"
-                                    leaveFrom="scale-100 opacity-100"
-                                    leaveTo="scale-[0.985] opacity-0"
-                                />
-                                <span
-                                    className={`relative z-10 flex h-full items-center transition-[padding,justify-content] duration-200 ease-out ${
-                                        isCollapsed ? 'justify-center px-0' : 'justify-start px-4'
-                                    }`}
-                                >
-                                    <span
-                                        className={`flex items-center justify-center transition-[width,transform,color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                                            isCollapsed ? 'w-11' : 'w-[18px]'
-                                        } ${
-                                            isActive
-                                                ? isCollapsed
-                                                    ? 'text-emerald-300'
-                                                    : 'translate-x-0.5 text-emerald-300'
-                                                : 'text-slate-500'
-                                        }`}
-                                    >
-                                        <Icon size={18} />
-                                    </span>
-                                </span>
-                                <Transition
-                                    show={!isCollapsed}
-                                    as="span"
-                                    className={`pointer-events-none absolute inset-y-0 left-12 right-6 z-10 flex items-center whitespace-nowrap transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                                        isActive ? 'translate-x-0.5' : ''
-                                    }`}
-                                    enter="transition duration-180 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                                    enterFrom="opacity-0 translate-x-1"
-                                    enterTo="opacity-100 translate-x-0"
-                                    leave="transition duration-120 ease-[cubic-bezier(0.4,0,0.2,1)]"
-                                    leaveFrom="opacity-100 translate-x-0"
-                                    leaveTo="opacity-0 translate-x-1"
-                                >
-                                    {label}
-                                </Transition>
-                                <Transition
-                                    show={isActive && !isCollapsed}
-                                    as="span"
-                                    aria-hidden="true"
-                                    className="absolute right-4 top-1/2 z-10 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-emerald-300"
-                                    enter="transition duration-220 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                                    enterFrom="scale-50 opacity-0"
-                                    enterTo="scale-100 opacity-100"
-                                    leave="transition duration-150 ease-[cubic-bezier(0.4,0,0.2,1)]"
-                                    leaveFrom="scale-100 opacity-100"
-                                    leaveTo="scale-50 opacity-0"
-                                />
-                            </button>
-                        );
-                    })}
+                                    return (
+                                        <button
+                                            key={key}
+                                            onClick={() => onPageChange(key)}
+                                            aria-label={label}
+                                            title={label}
+                                            className={`relative h-11 w-full overflow-hidden rounded-xl text-sm transition-[color,transform] duration-200 ease-out ${
+                                                isActive
+                                                    ? 'text-emerald-100'
+                                                    : 'text-slate-400 hover:text-slate-100'
+                                            }`}
+                                        >
+                                            <Transition
+                                                show={isActive}
+                                                as="span"
+                                                aria-hidden="true"
+                                                className="absolute inset-0 rounded-xl border border-emerald-400/20 bg-slate-700/80 shadow-[0_14px_30px_rgba(15,23,42,0.35)]"
+                                                enter="transition duration-220 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                                                enterFrom="scale-[0.97] opacity-0"
+                                                enterTo="scale-100 opacity-100"
+                                                leave="transition duration-180 ease-[cubic-bezier(0.4,0,0.2,1)]"
+                                                leaveFrom="scale-100 opacity-100"
+                                                leaveTo="scale-[0.985] opacity-0"
+                                            />
+                                            <span
+                                                className={`relative z-10 flex h-full items-center transition-[padding,justify-content] duration-200 ease-out ${
+                                                    isCollapsed ? 'justify-center px-0' : 'justify-start px-4'
+                                                }`}
+                                            >
+                                                <span
+                                                    className={`flex items-center justify-center transition-[width,transform,color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                                                        isCollapsed ? 'w-11' : 'w-[18px]'
+                                                    } ${
+                                                        isActive
+                                                            ? isCollapsed
+                                                                ? 'text-emerald-300'
+                                                                : 'translate-x-0.5 text-emerald-300'
+                                                            : 'text-slate-500'
+                                                    }`}
+                                                >
+                                                    <Icon size={18} />
+                                                </span>
+                                            </span>
+                                            <Transition
+                                                show={!isCollapsed}
+                                                as="span"
+                                                className={`pointer-events-none absolute inset-y-0 left-12 right-6 z-10 flex items-center whitespace-nowrap transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                                                    isActive ? 'translate-x-0.5' : ''
+                                                }`}
+                                                enter="transition duration-180 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                                                enterFrom="opacity-0 translate-x-1"
+                                                enterTo="opacity-100 translate-x-0"
+                                                leave="transition duration-120 ease-[cubic-bezier(0.4,0,0.2,1)]"
+                                                leaveFrom="opacity-100 translate-x-0"
+                                                leaveTo="opacity-0 translate-x-1"
+                                            >
+                                                {label}
+                                            </Transition>
+                                            <Transition
+                                                show={isActive && !isCollapsed}
+                                                as="span"
+                                                aria-hidden="true"
+                                                className="absolute right-4 top-1/2 z-10 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-emerald-300"
+                                                enter="transition duration-220 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                                                enterFrom="scale-50 opacity-0"
+                                                enterTo="scale-100 opacity-100"
+                                                leave="transition duration-150 ease-[cubic-bezier(0.4,0,0.2,1)]"
+                                                leaveFrom="scale-100 opacity-100"
+                                                leaveTo="scale-50 opacity-0"
+                                            />
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ))}
                 </div>
             </nav>
 

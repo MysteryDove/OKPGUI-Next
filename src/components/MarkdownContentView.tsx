@@ -1,4 +1,4 @@
-import MDEditor from '@uiw/react-md-editor';
+import { renderMarkdownToHtml } from '../utils/markdown';
 
 interface MarkdownContentViewProps {
     content: string;
@@ -14,8 +14,9 @@ export default function MarkdownContentView({
     }
 
     return (
-        <div data-color-mode="dark" className="okp-md-preview">
-            <MDEditor.Markdown source={content} style={{ whiteSpace: 'pre-wrap' }} />
-        </div>
+        <div
+            className="okp-md-preview okp-md-preview-content"
+            dangerouslySetInnerHTML={{ __html: renderMarkdownToHtml(content) }}
+        />
     );
 }

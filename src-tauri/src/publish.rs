@@ -571,6 +571,13 @@ fn generate_site_template_toml(
         toml_content.push_str(&format!("filename_regex = '''{}'''\n", template.ep_pattern));
     }
 
+    if !template.resolution_pattern.trim().is_empty() {
+        toml_content.push_str(&format!(
+            "resolution_regex = '''{}'''\n",
+            template.resolution_pattern
+        ));
+    }
+
     if !template.poster.trim().is_empty() {
         toml_content.push_str(&format!(
             "poster = \"{}\"\n",
